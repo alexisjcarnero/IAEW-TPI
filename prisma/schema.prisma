@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RolUsuario {
+  SOLICITANTE
+  SUPERVISOR
+}
+
+enum NivelAgente {
+  N1
+  N2
+  N3
+}
+
+enum Prioridad {
+  BAJA
+  MEDIA
+  ALTA
+  CRITICA
+}
+
+enum EstadoTicket {
+  ABIERTO
+  ASIGNADO
+  EN_PROGRESO
+  ESCALADO
+  RESUELTO
+  CERRADO
+}
+
+model Usuario {
+  id        String     @id @default(uuid())
+  nombre    String
+  email     String     @unique
+  rol       RolUsuario @default(SOLICITANTE)
+  creadoEn  DateTime   @default(now()) @map("creado_en")
+
+  tickets Ticket[]
+
+  @@map("usuarios")
+}
+
+model Agente {
+  id       String      @id @default(uuid())
+  nombre   String
+  email    String      @unique
+  nivel    NivelAgente @default(N1)
+  activo   Boolean     @default(true)
+  creadoEn DateTime    @default(now()) @map("creado_en")
+
+  ticketsAsignados Ticket[]       @relation("AgenteAsignado")
+  escalamientos    Escalamiento[] @relation("AgenteDestino")
+
+  @@map("agentes")
+}
+
+model SlaPolicy {
+  id                    String    @id @default(uuid())
+  prioridad             Prioridad @unique
+  minutosPrimeraRespuesta Int     @map("minutos_primera_respuesta")
+  minutosResolucion      Int      @map("minutos_resolucion")
+
+  tickets Ticket[]
+
+  @@map("sla_policies")
+}
+
+model Ticket {
+  id               String       @id @default(uuid())
+  titulo           String
+  descripcion      String
+  prioridad        Prioridad    @default(MEDIA)
+  estado           EstadoTicket @default(ABIERTO)
+  nivelActual      NivelAgente  @default(N1) @map("nivel_actual")
+
+  solicitanteId    String       @map("solicitante_id")
+  solicitante      Usuario      @relation(fields: [solicitanteId], references: [id])
+
+  agenteAsignadoId String?      @map("agente_asignado_id")
+  agenteAsignado   Agente?      @relation("AgenteAsignado", fields: [agenteAsignadoId], references: [id])
+
+  slaPolicyId      String       @map("sla_policy_id")
+  slaPolicy        SlaPolicy    @relation(fields: [slaPolicyId], references: [id])
+
+  venceSlaAt       DateTime?    @map("vence_sla_at")
+  creadoEn         DateTime     @default(now()) @map("creado_en")
+  actualizadoEn    DateTime     @updatedAt @map("actualizado_en")
+  cerradoEn        DateTime?    @map("cerrado_en")
+
+  comentarios   Comentario[]
+  escalamientos Escalamiento[]
+
+  @@map("tickets")
+}
+
+model Comentario {
+  id        String   @id @default(uuid())
+  ticketId  String   @map("ticket_id")
+  ticket    Ticket   @relation(fields: [ticketId], references: [id])
+  autor     String
+  texto     String
+  creadoEn  DateTime @default(now()) @map("creado_en")
+
+  @@map("comentarios")
+}
+
+model Escalamiento {
+  id             String      @id @default(uuid())
+  ticketId       String      @map("ticket_id")
+  ticket         Ticket      @relation(fields: [ticketId], references: [id])
+  nivelOrigen    NivelAgente @map("nivel_origen")
+  nivelDestino   NivelAgente @map("nivel_destino")
+  agenteDestinoId String?    @map("agente_destino_id")
+  agenteDestino   Agente?    @relation("AgenteDestino", fields: [agenteDestinoId], references: [id])
+  motivo         String
+  creadoEn       DateTime    @default(now()) @map("creado_en")
+
+  @@map("escalamientos")
+}

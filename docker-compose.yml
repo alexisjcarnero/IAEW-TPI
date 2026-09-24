@@ -1,0 +1,69 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mesa-ayuda-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iaew_mesa_ayuda}
+      POSTGRES_USER: ${POSTGRES_USER:-iaew}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iaew-local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - mesa-ayuda-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iaew}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4.2-management
+    container_name: mesa-ayuda-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-iaew}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS:-iaew-local}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    tmpfs:
+      - /var/lib/rabbitmq:uid=999,gid=999,mode=0770
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  webhook-receiver:
+    build: ./webhook-receiver
+    container_name: mesa-ayuda-webhook-receiver
+    environment:
+      PORT: 4000
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-colocar-secreto-compartido-local}
+    ports:
+      - "4000:4000"
+
+  api:
+    build: .
+    container_name: mesa-ayuda-api
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      webhook-receiver:
+        condition: service_started
+    environment:
+      PORT: ${PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://iaew:iaew-local@db:5432/iaew_mesa_ayuda?schema=public}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-colocar-api-key-local}
+      RABBIT_URL: ${RABBIT_URL:-amqp://iaew:iaew-local@rabbitmq:5672}
+      RABBIT_EXCHANGE: ${RABBIT_EXCHANGE:-mesa-ayuda.eventos}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://webhook-receiver:4000/webhooks/mesa-ayuda}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-colocar-secreto-compartido-local}
+    ports:
+      - "3000:3000"
+
+volumes:
+  mesa-ayuda-db-data:
