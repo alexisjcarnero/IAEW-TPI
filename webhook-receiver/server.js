@@ -32,7 +32,7 @@ function verifySignature(req) {
     .digest('hex');
   const provided = signatureHeader.replace(/^sha256=/, '');
 
-  if (provided.length !== expected.length) return false;
+  if (!/^[a-f0-9]{64}$/i.test(provided)) return false;
   return crypto.timingSafeEqual(Buffer.from(provided, 'hex'), Buffer.from(expected, 'hex'));
 }
 

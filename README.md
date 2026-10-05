@@ -5,7 +5,8 @@ API REST para un sistema de mesa de ayuda: creación, asignación, escalamiento 
 ## Integrantes
 
 - Alexis Carnero (alexisjcarnero@gmail.com)
-- _Completar con el resto del equipo_
+- Esmeralda Marín (esmemarinm03@gmail.com)
+- Maria Florencia Cornier Scocco (florcornier@gmail.com)
 
 ## Dominio elegido y alcance
 
@@ -55,7 +56,10 @@ cp .env.example .env
 | `AUTH0_AUDIENCE` | Identifier de la API creada en Auth0. |
 | `INTERNAL_API_KEY` | Clave para el endpoint interno protegido con `x-api-key`. |
 | `RABBIT_USER`, `RABBIT_PASS`, `RABBIT_URL`, `RABBIT_EXCHANGE` | Credenciales y conexión a RabbitMQ. |
+| `RABBITMQ_PORT`, `RABBITMQ_MANAGEMENT_PORT` | Puertos del host publicados para AMQP y el panel de RabbitMQ (defaults `5672` y `15672`). Cambiarlos si ya están ocupados. |
 | `WEBHOOK_URL`, `WEBHOOK_SECRET` | Destino y secreto compartido para el webhook firmado (integración adicional). |
+
+Si no existe `.env`, Docker Compose usa valores placeholder para Auth0, suficientes para iniciar la API y consultar `/health`. Para validar tokens, configurar el dominio y audience reales del tenant.
 
 **No se suben secretos reales al repositorio.** El `.env` está en `.gitignore`; solo se versiona `.env.example`.
 
@@ -214,7 +218,7 @@ Ver [`docs/adr/`](docs/adr/):
 
 ## Release y entrega
 
-- **Tag de release:** `v1.0.0`
-- **Commit hash de esta entrega:** `dd31995659c25d3ba128990b37395fc34b774fa2`
+- **Tag de release:** `v1.0.1`
+- **Commit hash de esta entrega:** se actualizará después del commit de contenido.
 
-> Nota: por cómo funciona git, este README no puede contener el hash del commit que lo incluye a sí mismo. El hash de arriba corresponde al último commit de contenido antes de la entrega; el commit inmediatamente posterior solo actualiza esta línea y lleva el tag `v1.0.0`.
+> Nota: por cómo funciona git, este README no puede contener el hash del commit que lo incluye a sí mismo. Se indica el hash del commit de contenido; el commit inmediatamente posterior solo actualiza esta línea y lleva el tag `v1.0.1`.

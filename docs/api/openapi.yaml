@@ -5,7 +5,7 @@ info:
     API REST para gestión de tickets de mesa de ayuda: creación, asignación,
     escalamiento y cierre de tickets, con seguridad OAuth 2.0/JWT (Auth0) y
     scopes por acción. Trabajo Práctico Integrador — IAEW 2026.
-  version: "1.0.0"
+  version: "1.0.1"
   contact:
     name: Equipo Mesa de ayuda — IAEW 2026
 
@@ -24,6 +24,9 @@ security:
 
 paths:
   /health:
+    servers:
+      - url: http://localhost:3000
+        description: Entorno local (docker compose)
     get:
       tags: [Salud]
       summary: Verifica el estado de la API, la base de datos y el broker.
@@ -45,6 +48,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /internal/sla-policies:
+    servers:
+      - url: http://localhost:3000
+        description: Entorno local (docker compose)
+    get:
+      tags: [Salud]
+      summary: Lista las políticas de SLA vigentes.
+      description: Endpoint interno protegido con una API key compartida.
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: Políticas de SLA configuradas.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SlaPolicy"
+              example:
+                data:
+                  - id: "33333333-3333-3333-3333-333333333333"
+                    prioridad: ALTA
+                    minutosPrimeraRespuesta: 30
+                    minutosResolucion: 240
+        "401":
+          description: API key inválida o faltante.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /tickets:
     get:
@@ -89,6 +126,8 @@ paths:
                     creadoEn: "2026-09-24T08:00:00.000Z"
                     actualizadoEn: "2026-09-24T08:00:00.000Z"
                     cerradoEn: null
+        "400":
+          $ref: "#/components/responses/SolicitudInvalida"
         "401":
           $ref: "#/components/responses/NoAutorizado"
         "403":
@@ -546,13 +585,13 @@ components:
     NoAutorizado:
       description: Falta el token o es inválido/expiró.
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     ScopeInsuficiente:
       description: El token no tiene el scope requerido.
       content:
-        application/json:
+        application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     NoEncontrado:
@@ -592,6 +631,19 @@ components:
     NivelAgente:
       type: string
       enum: [N1, N2, N3]
+
+    SlaPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        prioridad:
+          $ref: "#/components/schemas/Prioridad"
+        minutosPrimeraRespuesta:
+          type: integer
+        minutosResolucion:
+          type: integer
 
     HealthStatus:
       type: object

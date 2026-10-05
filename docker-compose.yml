@@ -23,12 +23,12 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBIT_USER:-iaew}
       RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS:-iaew-local}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     tmpfs:
       - /var/lib/rabbitmq:uid=999,gid=999,mode=0770
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -55,8 +55,8 @@ services:
     environment:
       PORT: ${PORT:-3000}
       DATABASE_URL: ${DATABASE_URL:-postgresql://iaew:iaew-local@db:5432/iaew_mesa_ayuda?schema=public}
-      AUTH0_DOMAIN: ${AUTH0_DOMAIN}
-      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE}
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:-example.us.auth0.com}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://mesa-ayuda.local}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-colocar-api-key-local}
       RABBIT_URL: ${RABBIT_URL:-amqp://iaew:iaew-local@rabbitmq:5672}
       RABBIT_EXCHANGE: ${RABBIT_EXCHANGE:-mesa-ayuda.eventos}

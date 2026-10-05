@@ -3,13 +3,39 @@ const { prisma } = require('../db');
 const { requireScope } = require('../middleware/auth0');
 
 const router = express.Router();
+const estadosPermitidos = new Set(['ABIERTO', 'ASIGNADO', 'EN_PROGRESO', 'ESCALADO', 'RESUELTO', 'CERRADO']);
+const prioridadesPermitidas = new Set(['BAJA', 'MEDIA', 'ALTA', 'CRITICA']);
 
 // GET /api/v1/tickets — implementado para probar el camino end-to-end
 // (Auth0 -> API -> PostgreSQL). El resto de las operaciones de negocio
 // quedan como esqueleto (501) para la Entrega 2.
 router.get('/tickets', requireScope('read:tickets'), async (req, res, next) => {
+  const { estado, prioridad } = req.query;
+
+  if (estado !== undefined && !estadosPermitidos.has(estado)) {
+    return res.status(400).type('application/problem+json').json({
+      type: 'about:blank',
+      title: 'Estado de ticket inválido',
+      status: 400,
+      correlationId: req.correlationId,
+    });
+  }
+
+  if (prioridad !== undefined && !prioridadesPermitidas.has(prioridad)) {
+    return res.status(400).type('application/problem+json').json({
+      type: 'about:blank',
+      title: 'Prioridad inválida',
+      status: 400,
+      correlationId: req.correlationId,
+    });
+  }
+
   try {
     const tickets = await prisma.ticket.findMany({
+      where: {
+        ...(estado !== undefined && { estado }),
+        ...(prioridad !== undefined && { prioridad }),
+      },
       include: { solicitante: true, agenteAsignado: true, slaPolicy: true },
       orderBy: { creadoEn: 'desc' },
       take: 50,
