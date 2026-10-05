@@ -219,6 +219,6 @@ Ver [`docs/adr/`](docs/adr/):
 ## Release y entrega
 
 - **Tag de release:** `v1.0.1`
-- **Commit hash de esta entrega:** se actualizará después del commit de contenido.
+- **Commit hash de esta entrega:** `247ea8cdf61fcd2ccebad213aba0b9cec7a044ad`
 
 > Nota: por cómo funciona git, este README no puede contener el hash del commit que lo incluye a sí mismo. Se indica el hash del commit de contenido; el commit inmediatamente posterior solo actualiza esta línea y lleva el tag `v1.0.1`.
