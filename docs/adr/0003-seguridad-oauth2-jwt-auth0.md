@@ -1,6 +1,6 @@
 # ADR 0003 — Seguridad: OAuth 2.0 + JWT vía Auth0, con scopes por acción
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada e implementada
 - **Fecha:** 2026-09-24
 
 ## Contexto
@@ -25,6 +25,6 @@ Cada endpoint sensible requiere el/los scope(s) correspondiente(s) (ver `src/rou
 
 ## Consecuencias
 
-- Todas las rutas de negocio quedan protegidas desde el esqueleto (aunque respondan `501`), documentando ya el modelo de autorización.
+- Todas las rutas de negocio implementadas quedan protegidas por el scope correspondiente.
 - El README debe documentar paso a paso cómo crear la API en Auth0, el cliente M2M, asignar los scopes, y obtener un token con `client_credentials`.
-- Falta (Entrega 2): mapear los scopes a validaciones de negocio más finas si se requiere (por ejemplo, un agente N1 no puede cerrar tickets críticos).
+- Auth0 es una dependencia externa; la API necesita acceso al discovery/JWKS y el equipo debe configurar el tenant antes de la demo.

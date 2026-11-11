@@ -1,225 +1,168 @@
 openapi: 3.1.0
 info:
   title: Mesa de ayuda API
-  description: >
-    API REST para gestión de tickets de mesa de ayuda: creación, asignación,
-    escalamiento y cierre de tickets, con seguridad OAuth 2.0/JWT (Auth0) y
-    scopes por acción. Trabajo Práctico Integrador — IAEW 2026.
-  version: "1.0.1"
+  version: 1.0.2
+  description: |
+    API REST del TPI IAEW 2026. Gestiona tickets, usuarios y agentes, y
+    ejecuta el escalamiento transaccional que genera un evento asincronico.
   contact:
-    name: Equipo Mesa de ayuda — IAEW 2026
-
+    name: Equipo Mesa de ayuda - IAEW 2026
 servers:
   - url: http://localhost:3000/api/v1
-    description: Entorno local (docker compose)
-
+    description: Docker Compose local
 tags:
+  - name: Operacion
+    description: Salud y endpoints internos de operacion.
   - name: Tickets
+    description: Ciclo de vida, asignacion, escalamiento, comentarios y efectos.
   - name: Agentes
+    description: Administracion de responsables de soporte.
   - name: Usuarios
-  - name: Salud
-
+    description: Administracion de solicitantes y supervisores.
 security:
   - oauth2: []
 
 paths:
   /health:
-    servers:
-      - url: http://localhost:3000
-        description: Entorno local (docker compose)
+    servers: [{ url: "http://localhost:3000" }]
     get:
-      tags: [Salud]
-      summary: Verifica el estado de la API, la base de datos y el broker.
+      tags: [Operacion]
+      operationId: getHealth
+      summary: Estado de API, PostgreSQL y RabbitMQ
       security: []
       responses:
         "200":
-          description: Todos los componentes están operativos.
+          description: Dependencias operativas
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
-              example:
-                status: ok
-                db: up
-                broker: up
+              schema: { $ref: "#/components/schemas/Health" }
+              example: { status: ok, db: up, broker: up }
         "503":
-          description: Algún componente no está disponible.
+          description: Servicio degradado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/HealthStatus"
+              schema: { $ref: "#/components/schemas/Health" }
 
   /internal/sla-policies:
-    servers:
-      - url: http://localhost:3000
-        description: Entorno local (docker compose)
+    servers: [{ url: "http://localhost:3000" }]
     get:
-      tags: [Salud]
-      summary: Lista las políticas de SLA vigentes.
-      description: Endpoint interno protegido con una API key compartida.
+      tags: [Operacion]
+      operationId: listSlaPolicies
+      summary: Lista politicas SLA (ejemplo de API key)
       security: [{ apiKey: [] }]
       responses:
         "200":
-          description: Políticas de SLA configuradas.
+          description: Politicas configuradas
           content:
             application/json:
               schema:
                 type: object
+                required: [data]
                 properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/SlaPolicy"
-              example:
-                data:
-                  - id: "33333333-3333-3333-3333-333333333333"
-                    prioridad: ALTA
-                    minutosPrimeraRespuesta: 30
-                    minutosResolucion: 240
-        "401":
-          description: API key inválida o faltante.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Problem"
+                  data: { type: array, items: { $ref: "#/components/schemas/SlaPolicy" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /tickets:
     get:
       tags: [Tickets]
-      summary: Lista los tickets.
-      security: [{ oauth2: [read:tickets] }]
+      operationId: listTickets
+      summary: Lista tickets
+      security: [{ oauth2: ["read:tickets"] }]
       parameters:
-        - name: estado
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/EstadoTicket"
-        - name: prioridad
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/Prioridad"
+        - { name: estado, in: query, schema: { $ref: "#/components/schemas/EstadoTicket" } }
+        - { name: prioridad, in: query, schema: { $ref: "#/components/schemas/Prioridad" } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
       responses:
         "200":
-          description: Listado de tickets.
+          description: Listado
           content:
             application/json:
               schema:
                 type: object
+                required: [data]
                 properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Ticket"
-              example:
-                data:
-                  - id: "b3b1e2b0-2a7d-4c1a-9c4e-1f2a3b4c5d6e"
-                    titulo: "No puedo acceder al sistema de facturación"
-                    descripcion: "El usuario reporta error 500 al intentar iniciar sesión."
-                    prioridad: ALTA
-                    estado: ASIGNADO
-                    nivelActual: N1
-                    solicitanteId: "11111111-1111-1111-1111-111111111111"
-                    agenteAsignadoId: "22222222-2222-2222-2222-222222222222"
-                    slaPolicyId: "33333333-3333-3333-3333-333333333333"
-                    venceSlaAt: "2026-09-25T12:00:00.000Z"
-                    creadoEn: "2026-09-24T08:00:00.000Z"
-                    actualizadoEn: "2026-09-24T08:00:00.000Z"
-                    cerradoEn: null
-        "400":
-          $ref: "#/components/responses/SolicitudInvalida"
-        "401":
-          $ref: "#/components/responses/NoAutorizado"
-        "403":
-          $ref: "#/components/responses/ScopeInsuficiente"
+                  data: { type: array, items: { $ref: "#/components/schemas/Ticket" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [Tickets]
-      summary: Crea un ticket nuevo.
-      security: [{ oauth2: [write:tickets] }]
+      operationId: createTicket
+      summary: Crea un ticket y calcula su vencimiento SLA
+      security: [{ oauth2: ["write:tickets"] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/TicketCreate"
+            schema: { $ref: "#/components/schemas/TicketCreate" }
             example:
-              titulo: "La impresora de recepción no responde"
-              descripcion: "Lleva sin imprimir desde esta mañana."
-              prioridad: MEDIA
-              solicitanteId: "11111111-1111-1111-1111-111111111111"
+              titulo: Sistema de facturacion caido
+              descripcion: Todos los usuarios reciben error 500.
+              prioridad: CRITICA
+              solicitanteId: 11111111-1111-4111-8111-111111111111
       responses:
         "201":
-          description: Ticket creado.
+          description: Creado
+          headers:
+            Location: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-        "400":
-          $ref: "#/components/responses/SolicitudInvalida"
-        "401":
-          $ref: "#/components/responses/NoAutorizado"
-        "403":
-          $ref: "#/components/responses/ScopeInsuficiente"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
-  /tickets/{ticketId}:
-    parameters:
-      - $ref: "#/components/parameters/TicketId"
+  /tickets/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       tags: [Tickets]
-      summary: Obtiene el detalle de un ticket.
-      security: [{ oauth2: [read:tickets] }]
+      operationId: getTicket
+      summary: Obtiene un ticket con historial
+      security: [{ oauth2: ["read:tickets"] }]
       responses:
         "200":
-          description: Detalle del ticket.
+          description: Ticket
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-        "404":
-          $ref: "#/components/responses/NoEncontrado"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [Tickets]
-      summary: Actualiza campos del ticket (título, descripción, prioridad).
-      security: [{ oauth2: [write:tickets] }]
+      operationId: updateTicket
+      summary: Actualiza datos o transiciona a EN_PROGRESO/RESUELTO
+      security: [{ oauth2: ["write:tickets"] }]
       requestBody:
+        required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/TicketUpdate"
+            schema: { $ref: "#/components/schemas/TicketUpdate" }
+            example: { estado: RESUELTO }
       responses:
         "200":
-          description: Ticket actualizado.
+          description: Actualizado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-        "409":
-          $ref: "#/components/responses/Conflicto"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
     delete:
       tags: [Tickets]
-      summary: Elimina un ticket (uso administrativo).
-      security: [{ oauth2: [write:tickets] }]
+      operationId: deleteTicket
+      summary: Elimina un ticket ABIERTO sin historial
+      security: [{ oauth2: ["write:tickets"] }]
       responses:
-        "204":
-          description: Ticket eliminado.
-        "404":
-          $ref: "#/components/responses/NoEncontrado"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+        "204": { description: Eliminado }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
-  /tickets/{ticketId}/asignacion:
-    parameters:
-      - $ref: "#/components/parameters/TicketId"
+  /tickets/{id}/asignacion:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     post:
       tags: [Tickets]
-      summary: Asigna un agente al ticket.
-      security: [{ oauth2: [assign:tickets] }]
+      operationId: assignTicket
+      summary: Asigna un agente activo del nivel actual
+      security: [{ oauth2: ["assign:tickets"] }]
       requestBody:
         required: true
         content:
@@ -227,628 +170,528 @@ paths:
             schema:
               type: object
               required: [agenteId]
+              additionalProperties: false
               properties:
-                agenteId:
-                  type: string
-                  format: uuid
-            example:
-              agenteId: "22222222-2222-2222-2222-222222222222"
+                agenteId: { type: string, format: uuid }
+            example: { agenteId: 22222222-2222-4222-8222-222222222222 }
       responses:
         "200":
-          description: Ticket asignado.
+          description: Asignado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-        "404":
-          description: Agente inexistente.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-              example:
-                type: about:blank
-                title: "Agente inexistente"
-                status: 404
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
-  /tickets/{ticketId}/escalamientos:
-    parameters:
-      - $ref: "#/components/parameters/TicketId"
+  /tickets/{id}/escalamientos:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     post:
       tags: [Tickets]
-      summary: >
-        Escala el ticket al siguiente nivel (N1 -> N2 -> N3), validando
-        prioridad, estado, responsable asignado y reglas de SLA. Emite el
-        evento `ticket.escalado` (RabbitMQ) y notifica al canal externo
-        mediante un webhook firmado.
-      security: [{ oauth2: [write:tickets, assign:tickets] }]
+      operationId: escalateTicket
+      summary: Escala el ticket y registra un evento outbox atomicamente
+      description: |
+        Valida estado, prioridad/riesgo SLA, responsable, nivel siguiente y
+        agente destino. La transaccion serializable crea el historial, actualiza
+        el ticket y persiste `ticket.escalado` en la outbox.
+      security: [{ oauth2: ["write:tickets", "assign:tickets"] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/EscalamientoCreate"
+            schema: { $ref: "#/components/schemas/EscalamientoCreate" }
             example:
-              motivo: "SLA de primera respuesta próximo a vencer sin atención de N1."
-              agenteDestinoId: "44444444-4444-4444-4444-444444444444"
+              motivo: Incidente critico requiere especialista
+              agenteDestinoId: 33333333-3333-4333-8333-333333333333
       responses:
         "201":
-          description: Escalamiento registrado.
+          description: Escalamiento confirmado; evento pendiente o ya publicado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Escalamiento"
-              example:
-                id: "55555555-5555-5555-5555-555555555555"
-                ticketId: "b3b1e2b0-2a7d-4c1a-9c4e-1f2a3b4c5d6e"
-                nivelOrigen: N1
-                nivelDestino: N2
-                agenteDestinoId: "44444444-4444-4444-4444-444444444444"
-                motivo: "SLA de primera respuesta próximo a vencer sin atención de N1."
-                creadoEn: "2026-09-24T09:30:00.000Z"
-        "404":
-          description: Agente destino inexistente.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-        "409":
-          description: El ticket está cerrado y no admite escalamiento.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-              example:
-                type: about:blank
-                title: "El ticket está cerrado"
-                status: 409
-        "422":
-          description: Escalamiento no permitido (ya está en el nivel máximo, o el estado no lo permite).
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-              example:
-                type: about:blank
-                title: "Escalamiento no permitido: el ticket ya está en nivel N3"
-                status: 422
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/EscalamientoResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
-  /tickets/{ticketId}/cierre:
-    parameters:
-      - $ref: "#/components/parameters/TicketId"
+  /tickets/{id}/cierre:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     post:
       tags: [Tickets]
-      summary: Cierra el ticket.
-      security: [{ oauth2: [close:tickets] }]
+      operationId: closeTicket
+      summary: Cierra un ticket RESUELTO y emite ticket.cerrado
+      security: [{ oauth2: ["close:tickets"] }]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [resolucion]
+              additionalProperties: false
               properties:
-                resolucion:
-                  type: string
+                resolucion: { type: string, minLength: 1, maxLength: 2000 }
       responses:
         "200":
-          description: Ticket cerrado.
+          description: Cerrado
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Ticket"
-        "409":
-          $ref: "#/components/responses/Conflicto"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+                type: object
+                required: [ticket, evento]
+                properties:
+                  ticket: { $ref: "#/components/schemas/Ticket" }
+                  evento: { $ref: "#/components/schemas/EventReference" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
-  /tickets/{ticketId}/comentarios:
-    parameters:
-      - $ref: "#/components/parameters/TicketId"
+  /tickets/{id}/comentarios:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       tags: [Tickets]
-      summary: Lista los comentarios del ticket.
-      security: [{ oauth2: [read:tickets] }]
+      operationId: listTicketComments
+      summary: Lista comentarios
+      security: [{ oauth2: ["read:tickets"] }]
       responses:
         "200":
-          description: Listado de comentarios.
+          description: Comentarios
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Comentario"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+                  data: { type: array, items: { $ref: "#/components/schemas/Comentario" } }
     post:
       tags: [Tickets]
-      summary: Agrega un comentario al ticket.
-      security: [{ oauth2: [write:tickets] }]
+      operationId: createTicketComment
+      summary: Agrega comentario
+      security: [{ oauth2: ["write:tickets"] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/ComentarioCreate"
+            schema: { $ref: "#/components/schemas/ComentarioCreate" }
       responses:
         "201":
-          description: Comentario creado.
+          description: Creado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comentario" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /tickets/{id}/notificaciones:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [Tickets]
+      operationId: listTicketNotifications
+      summary: Consulta el efecto persistido por el consumidor RabbitMQ
+      security: [{ oauth2: ["read:tickets"] }]
+      responses:
+        "200":
+          description: Notificaciones asincronicas
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Comentario"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Notificacion" } }
 
   /agentes:
     get:
       tags: [Agentes]
-      summary: Lista agentes.
-      security: [{ oauth2: [assign:tickets] }]
+      operationId: listAgents
+      summary: Lista agentes
+      security: [{ oauth2: ["assign:tickets"] }]
+      parameters:
+        - { name: nivel, in: query, schema: { $ref: "#/components/schemas/NivelAgente" } }
+        - { name: activo, in: query, schema: { type: boolean } }
       responses:
         "200":
-          description: Listado de agentes.
+          description: Agentes
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Agente"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+                  data: { type: array, items: { $ref: "#/components/schemas/Agente" } }
     post:
       tags: [Agentes]
-      summary: Crea un agente.
-      security: [{ oauth2: [assign:tickets] }]
+      operationId: createAgent
+      summary: Crea agente
+      security: [{ oauth2: ["assign:tickets"] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/AgenteCreate"
+            schema: { $ref: "#/components/schemas/AgenteCreate" }
       responses:
         "201":
-          description: Agente creado.
+          description: Creado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Agente"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Agente" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
-  /agentes/{agenteId}:
-    parameters:
-      - name: agenteId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
+  /agentes/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       tags: [Agentes]
-      summary: Obtiene un agente.
-      security: [{ oauth2: [assign:tickets] }]
+      operationId: getAgent
+      summary: Obtiene agente
+      security: [{ oauth2: ["assign:tickets"] }]
       responses:
         "200":
-          description: Detalle del agente.
+          description: Agente
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Agente"
-        "404":
-          $ref: "#/components/responses/NoEncontrado"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Agente" }
+        "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [Agentes]
-      summary: Actualiza un agente.
-      security: [{ oauth2: [assign:tickets] }]
+      operationId: updateAgent
+      summary: Actualiza o desactiva agente
+      security: [{ oauth2: ["assign:tickets"] }]
       requestBody:
+        required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/AgenteCreate"
+            schema: { $ref: "#/components/schemas/AgenteUpdate" }
       responses:
         "200":
-          description: Agente actualizado.
+          description: Actualizado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Agente"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Agente" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [Agentes]
-      summary: Da de baja un agente.
-      security: [{ oauth2: [assign:tickets] }]
+      operationId: deleteAgent
+      summary: Elimina agente sin historial
+      security: [{ oauth2: ["assign:tickets"] }]
       responses:
-        "204":
-          description: Agente eliminado.
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+        "204": { description: Eliminado }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /usuarios:
     get:
       tags: [Usuarios]
-      summary: Lista usuarios.
-      security: [{ oauth2: [read:tickets] }]
+      operationId: listUsers
+      summary: Lista usuarios
+      security: [{ oauth2: ["read:tickets"] }]
       responses:
         "200":
-          description: Listado de usuarios.
+          description: Usuarios
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Usuario"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+                  data: { type: array, items: { $ref: "#/components/schemas/Usuario" } }
     post:
       tags: [Usuarios]
-      summary: Crea un usuario.
-      security: [{ oauth2: [write:tickets] }]
+      operationId: createUser
+      summary: Crea usuario
+      security: [{ oauth2: ["write:tickets"] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/UsuarioCreate"
+            schema: { $ref: "#/components/schemas/UsuarioCreate" }
       responses:
         "201":
-          description: Usuario creado.
+          description: Creado
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Usuario"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Usuario" }
 
-  /usuarios/{usuarioId}:
-    parameters:
-      - name: usuarioId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
+  /usuarios/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       tags: [Usuarios]
-      summary: Obtiene un usuario.
-      security: [{ oauth2: [read:tickets] }]
+      operationId: getUser
+      summary: Obtiene usuario
+      security: [{ oauth2: ["read:tickets"] }]
       responses:
         "200":
-          description: Detalle del usuario.
+          description: Usuario
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Usuario"
-        "404":
-          $ref: "#/components/responses/NoEncontrado"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+              schema: { $ref: "#/components/schemas/Usuario" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Usuarios]
+      operationId: updateUser
+      summary: Actualiza usuario
+      security: [{ oauth2: ["write:tickets"] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UsuarioUpdate" }
+      responses:
+        "200":
+          description: Actualizado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usuario" }
     delete:
       tags: [Usuarios]
-      summary: Elimina un usuario (endpoint interno, protegido con x-api-key en vez de JWT).
+      operationId: deleteUser
+      summary: Elimina usuario sin tickets (ejemplo x-api-key)
       security: [{ apiKey: [] }]
       responses:
-        "204":
-          description: Usuario eliminado.
-        "401":
-          description: API key inválida o faltante.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-        "501":
-          $ref: "#/components/responses/NoImplementado"
+        "204": { description: Eliminado }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
 components:
   securitySchemes:
     oauth2:
       type: oauth2
-      description: OAuth 2.0 client_credentials contra Auth0. Ver README para el paso a paso.
+      description: Auth0, grant client_credentials, access token JWT RS256
       flows:
         clientCredentials:
           tokenUrl: https://TU_TENANT.us.auth0.com/oauth/token
           scopes:
-            read:tickets: Leer tickets.
-            write:tickets: Crear/editar tickets y comentarios.
-            assign:tickets: Asignar agentes y gestionar agentes.
-            close:tickets: Cerrar tickets.
+            read:tickets: Consultar tickets, usuarios y efectos
+            write:tickets: Crear y actualizar tickets, usuarios y comentarios
+            assign:tickets: Administrar agentes, asignar y escalar
+            close:tickets: Cerrar tickets resueltos
     apiKey:
       type: apiKey
       in: header
       name: x-api-key
-      description: Clave interna para endpoints de servicio a servicio.
 
   parameters:
-    TicketId:
-      name: ticketId
+    Id:
+      name: id
       in: path
       required: true
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
 
   responses:
-    NoAutorizado:
-      description: Falta el token o es inválido/expiró.
+    BadRequest:
+      description: Entrada invalida
       content:
         application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-    ScopeInsuficiente:
-      description: El token no tiene el scope requerido.
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Credencial ausente, invalida o expirada
       content:
         application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-    NoEncontrado:
-      description: El recurso no existe.
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Scope insuficiente
       content:
         application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-    Conflicto:
-      description: La operación no es válida en el estado actual del recurso.
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Recurso inexistente
       content:
         application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-    SolicitudInvalida:
-      description: El cuerpo de la solicitud no pasa validación.
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: Regla de negocio o estado actual impide la operacion
       content:
         application/problem+json:
-          schema:
-            $ref: "#/components/schemas/Problem"
-    NoImplementado:
-      description: >
-        Operación aún no implementada (esqueleto de la Entrega 1); se
-        implementará funcionalmente en la Entrega 2.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Problem"
+          schema: { $ref: "#/components/schemas/Problem" }
 
   schemas:
-    Prioridad:
-      type: string
-      enum: [BAJA, MEDIA, ALTA, CRITICA]
-    EstadoTicket:
-      type: string
-      enum: [ABIERTO, ASIGNADO, EN_PROGRESO, ESCALADO, RESUELTO, CERRADO]
-    NivelAgente:
-      type: string
-      enum: [N1, N2, N3]
+    Prioridad: { type: string, enum: [BAJA, MEDIA, ALTA, CRITICA] }
+    EstadoTicket: { type: string, enum: [ABIERTO, ASIGNADO, EN_PROGRESO, ESCALADO, RESUELTO, CERRADO] }
+    NivelAgente: { type: string, enum: [N1, N2, N3] }
+    RolUsuario: { type: string, enum: [SOLICITANTE, SUPERVISOR] }
+    EstadoNotificacion: { type: string, enum: [PENDIENTE, ENVIADA, FALLIDA] }
 
-    SlaPolicy:
+    Health:
       type: object
+      required: [status, db, broker]
       properties:
-        id:
-          type: string
-          format: uuid
-        prioridad:
-          $ref: "#/components/schemas/Prioridad"
-        minutosPrimeraRespuesta:
-          type: integer
-        minutosResolucion:
-          type: integer
-
-    HealthStatus:
-      type: object
-      properties:
-        status:
-          type: string
-          enum: [ok, degraded]
-        db:
-          type: string
-          enum: [up, down]
-        broker:
-          type: string
-          enum: [up, down]
+        status: { type: string, enum: [ok, degraded] }
+        db: { type: string, enum: [up, down] }
+        broker: { type: string, enum: [up, down] }
 
     Problem:
       type: object
-      description: Formato de error RFC 9457 (application/problem+json).
+      required: [type, title, status, correlationId]
       properties:
-        type:
-          type: string
-        title:
-          type: string
-        status:
-          type: integer
-        correlationId:
-          type: string
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        correlationId: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+    SlaPolicy:
+      type: object
+      required: [id, prioridad, minutosPrimeraRespuesta, minutosResolucion]
+      properties:
+        id: { type: string, format: uuid }
+        prioridad: { $ref: "#/components/schemas/Prioridad" }
+        minutosPrimeraRespuesta: { type: integer, minimum: 1 }
+        minutosResolucion: { type: integer, minimum: 1 }
 
     Usuario:
       type: object
+      required: [id, nombre, email, rol, creadoEn]
       properties:
-        id:
-          type: string
-          format: uuid
-        nombre:
-          type: string
-        email:
-          type: string
-          format: email
-        rol:
-          type: string
-          enum: [SOLICITANTE, SUPERVISOR]
-        creadoEn:
-          type: string
-          format: date-time
-
+        id: { type: string, format: uuid }
+        nombre: { type: string }
+        email: { type: string, format: email }
+        rol: { $ref: "#/components/schemas/RolUsuario" }
+        creadoEn: { type: string, format: date-time }
     UsuarioCreate:
       type: object
       required: [nombre, email]
+      additionalProperties: false
       properties:
-        nombre:
-          type: string
-        email:
-          type: string
-          format: email
-        rol:
-          type: string
-          enum: [SOLICITANTE, SUPERVISOR]
+        nombre: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 254 }
+        rol: { $ref: "#/components/schemas/RolUsuario" }
+    UsuarioUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 254 }
+        rol: { $ref: "#/components/schemas/RolUsuario" }
 
     Agente:
       type: object
+      required: [id, nombre, email, nivel, activo, creadoEn]
       properties:
-        id:
-          type: string
-          format: uuid
-        nombre:
-          type: string
-        email:
-          type: string
-          format: email
-        nivel:
-          $ref: "#/components/schemas/NivelAgente"
-        activo:
-          type: boolean
-        creadoEn:
-          type: string
-          format: date-time
-
+        id: { type: string, format: uuid }
+        nombre: { type: string }
+        email: { type: string, format: email }
+        nivel: { $ref: "#/components/schemas/NivelAgente" }
+        activo: { type: boolean }
+        creadoEn: { type: string, format: date-time }
     AgenteCreate:
       type: object
       required: [nombre, email, nivel]
+      additionalProperties: false
       properties:
-        nombre:
-          type: string
-        email:
-          type: string
-          format: email
-        nivel:
-          $ref: "#/components/schemas/NivelAgente"
+        nombre: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 254 }
+        nivel: { $ref: "#/components/schemas/NivelAgente" }
+        activo: { type: boolean, default: true }
+    AgenteUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 254 }
+        nivel: { $ref: "#/components/schemas/NivelAgente" }
+        activo: { type: boolean }
 
     Ticket:
       type: object
+      required: [id, titulo, descripcion, prioridad, estado, nivelActual, solicitanteId, slaPolicyId, creadoEn, actualizadoEn, version]
       properties:
-        id:
-          type: string
-          format: uuid
-        titulo:
-          type: string
-        descripcion:
-          type: string
-        prioridad:
-          $ref: "#/components/schemas/Prioridad"
-        estado:
-          $ref: "#/components/schemas/EstadoTicket"
-        nivelActual:
-          $ref: "#/components/schemas/NivelAgente"
-        solicitanteId:
-          type: string
-          format: uuid
-        agenteAsignadoId:
-          type: [string, "null"]
-          format: uuid
-        slaPolicyId:
-          type: string
-          format: uuid
-        venceSlaAt:
-          type: [string, "null"]
-          format: date-time
-        creadoEn:
-          type: string
-          format: date-time
-        actualizadoEn:
-          type: string
-          format: date-time
-        cerradoEn:
-          type: [string, "null"]
-          format: date-time
-
+        id: { type: string, format: uuid }
+        titulo: { type: string }
+        descripcion: { type: string }
+        prioridad: { $ref: "#/components/schemas/Prioridad" }
+        estado: { $ref: "#/components/schemas/EstadoTicket" }
+        nivelActual: { $ref: "#/components/schemas/NivelAgente" }
+        solicitanteId: { type: string, format: uuid }
+        agenteAsignadoId: { type: [string, "null"], format: uuid }
+        slaPolicyId: { type: string, format: uuid }
+        venceSlaAt: { type: [string, "null"], format: date-time }
+        creadoEn: { type: string, format: date-time }
+        actualizadoEn: { type: string, format: date-time }
+        cerradoEn: { type: [string, "null"], format: date-time }
+        version: { type: integer, minimum: 1 }
+        solicitante: { $ref: "#/components/schemas/Usuario" }
+        agenteAsignado:
+          oneOf:
+            - { $ref: "#/components/schemas/Agente" }
+            - { type: "null" }
+        slaPolicy: { $ref: "#/components/schemas/SlaPolicy" }
     TicketCreate:
       type: object
       required: [titulo, descripcion, solicitanteId]
+      additionalProperties: false
       properties:
-        titulo:
-          type: string
-        descripcion:
-          type: string
-        prioridad:
-          $ref: "#/components/schemas/Prioridad"
-        solicitanteId:
-          type: string
-          format: uuid
-
+        titulo: { type: string, minLength: 1, maxLength: 160 }
+        descripcion: { type: string, minLength: 1, maxLength: 4000 }
+        prioridad: { $ref: "#/components/schemas/Prioridad" }
+        solicitanteId: { type: string, format: uuid }
     TicketUpdate:
       type: object
+      minProperties: 1
+      additionalProperties: false
       properties:
-        titulo:
-          type: string
-        descripcion:
-          type: string
-        prioridad:
-          $ref: "#/components/schemas/Prioridad"
+        titulo: { type: string, minLength: 1, maxLength: 160 }
+        descripcion: { type: string, minLength: 1, maxLength: 4000 }
+        prioridad: { $ref: "#/components/schemas/Prioridad" }
+        estado: { type: string, enum: [EN_PROGRESO, RESUELTO] }
 
     Comentario:
       type: object
+      required: [id, ticketId, autor, texto, creadoEn]
       properties:
-        id:
-          type: string
-          format: uuid
-        ticketId:
-          type: string
-          format: uuid
-        autor:
-          type: string
-        texto:
-          type: string
-        creadoEn:
-          type: string
-          format: date-time
-
+        id: { type: string, format: uuid }
+        ticketId: { type: string, format: uuid }
+        autor: { type: string }
+        texto: { type: string }
+        creadoEn: { type: string, format: date-time }
     ComentarioCreate:
       type: object
       required: [autor, texto]
+      additionalProperties: false
       properties:
-        autor:
-          type: string
-        texto:
-          type: string
+        autor: { type: string, minLength: 1, maxLength: 120 }
+        texto: { type: string, minLength: 1, maxLength: 2000 }
 
     Escalamiento:
       type: object
+      required: [id, ticketId, nivelOrigen, nivelDestino, motivo, creadoEn]
       properties:
-        id:
-          type: string
-          format: uuid
-        ticketId:
-          type: string
-          format: uuid
-        nivelOrigen:
-          $ref: "#/components/schemas/NivelAgente"
-        nivelDestino:
-          $ref: "#/components/schemas/NivelAgente"
-        agenteDestinoId:
-          type: [string, "null"]
-          format: uuid
-        motivo:
-          type: string
-        creadoEn:
-          type: string
-          format: date-time
-
+        id: { type: string, format: uuid }
+        ticketId: { type: string, format: uuid }
+        nivelOrigen: { $ref: "#/components/schemas/NivelAgente" }
+        nivelDestino: { $ref: "#/components/schemas/NivelAgente" }
+        agenteDestinoId: { type: [string, "null"], format: uuid }
+        motivo: { type: string }
+        creadoEn: { type: string, format: date-time }
     EscalamientoCreate:
       type: object
       required: [motivo]
+      additionalProperties: false
       properties:
-        motivo:
-          type: string
-        agenteDestinoId:
-          type: string
-          format: uuid
+        motivo: { type: string, minLength: 1, maxLength: 500 }
+        agenteDestinoId: { type: string, format: uuid }
+    EscalamientoResult:
+      type: object
+      required: [ticket, escalamiento, evento]
+      properties:
+        ticket: { $ref: "#/components/schemas/Ticket" }
+        escalamiento: { $ref: "#/components/schemas/Escalamiento" }
+        evento: { $ref: "#/components/schemas/EventReference" }
+    EventReference:
+      type: object
+      required: [id, estado]
+      properties:
+        id: { type: string, format: uuid }
+        estado: { type: string, enum: [PENDIENTE_O_PUBLICADO] }
+
+    Notificacion:
+      type: object
+      required: [id, eventoId, ticketId, tipo, mensaje, estado, intentos, creadoEn]
+      properties:
+        id: { type: string, format: uuid }
+        eventoId: { type: string, format: uuid }
+        ticketId: { type: string, format: uuid }
+        tipo: { type: string, enum: [ticket.escalado, ticket.cerrado] }
+        mensaje: { type: string }
+        estado: { $ref: "#/components/schemas/EstadoNotificacion" }
+        intentos: { type: integer, minimum: 0 }
+        webhookStatus: { type: [integer, "null"] }
+        creadoEn: { type: string, format: date-time }
+        procesadoEn: { type: [string, "null"], format: date-time }

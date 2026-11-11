@@ -1,91 +1,119 @@
 # Modelo de datos
 
-Base de datos: **PostgreSQL 16**. Definido con Prisma (`prisma/schema.prisma`); ver [ADR 0002](adr/0002-base-datos-postgresql.md).
-
-## Diagrama entidad-relación
+PostgreSQL 16 con Prisma. Las migraciones versionadas son `0001_init` y `0002_final_delivery`; `prisma migrate deploy` las aplica automáticamente al iniciar la API.
 
 ```mermaid
 erDiagram
-    USUARIO ||--o{ TICKET : "solicita"
-    AGENTE ||--o{ TICKET : "atiende (opcional)"
-    SLA_POLICY ||--o{ TICKET : "rige"
-    TICKET ||--o{ COMENTARIO : "tiene"
-    TICKET ||--o{ ESCALAMIENTO : "acumula"
-    AGENTE ||--o{ ESCALAMIENTO : "recibe (opcional)"
+    USUARIO ||--o{ TICKET : solicita
+    AGENTE ||--o{ TICKET : atiende
+    SLA_POLICY ||--o{ TICKET : rige
+    TICKET ||--o{ COMENTARIO : contiene
+    TICKET ||--o{ ESCALAMIENTO : registra
+    AGENTE ||--o{ ESCALAMIENTO : recibe
+    TICKET ||--o{ NOTIFICACION : produce
 
     USUARIO {
-        uuid id PK
-        string nombre
-        string email UK
-        enum rol "SOLICITANTE | SUPERVISOR"
-        datetime creado_en
+      uuid id PK
+      string email UK
+      enum rol
     }
-
     AGENTE {
-        uuid id PK
-        string nombre
-        string email UK
-        enum nivel "N1 | N2 | N3"
-        boolean activo
-        datetime creado_en
+      uuid id PK
+      string email UK
+      enum nivel
+      boolean activo
     }
-
     SLA_POLICY {
-        uuid id PK
-        enum prioridad UK "BAJA | MEDIA | ALTA | CRITICA"
-        int minutos_primera_respuesta
-        int minutos_resolucion
+      uuid id PK
+      enum prioridad UK
+      int minutos_primera_respuesta
+      int minutos_resolucion
     }
-
     TICKET {
-        uuid id PK
-        string titulo
-        string descripcion
-        enum prioridad "BAJA | MEDIA | ALTA | CRITICA"
-        enum estado "ABIERTO | ASIGNADO | EN_PROGRESO | ESCALADO | RESUELTO | CERRADO"
-        enum nivel_actual "N1 | N2 | N3"
-        uuid solicitante_id FK
-        uuid agente_asignado_id FK
-        uuid sla_policy_id FK
-        datetime vence_sla_at
-        datetime creado_en
-        datetime actualizado_en
-        datetime cerrado_en
+      uuid id PK
+      enum prioridad
+      enum estado
+      enum nivel_actual
+      uuid solicitante_id FK
+      uuid agente_asignado_id FK
+      uuid sla_policy_id FK
+      datetime vence_sla_at
+      int version
     }
-
-    COMENTARIO {
-        uuid id PK
-        uuid ticket_id FK
-        string autor
-        string texto
-        datetime creado_en
-    }
-
     ESCALAMIENTO {
-        uuid id PK
-        uuid ticket_id FK
-        enum nivel_origen "N1 | N2 | N3"
-        enum nivel_destino "N1 | N2 | N3"
-        uuid agente_destino_id FK
-        string motivo
-        datetime creado_en
+      uuid id PK
+      uuid ticket_id FK
+      enum nivel_origen
+      enum nivel_destino
+      uuid agente_destino_id FK
+      string motivo
+    }
+    COMENTARIO {
+      uuid id PK
+      uuid ticket_id FK
+      string autor
+      string texto
+    }
+    NOTIFICACION {
+      uuid id PK
+      uuid evento_id UK
+      uuid ticket_id FK
+      enum estado
+      int intentos
+      int webhook_status
+    }
+    EVENTO_OUTBOX {
+      uuid id PK
+      string tipo
+      uuid agregado_id
+      json payload
+      string correlation_id
+      int intentos
+      datetime publicado_en
     }
 ```
 
-## Diccionario de datos (resumen)
+`EventoOutbox` no tiene FK al ticket intencionalmente: es un registro de integración que debe poder sobrevivir a cambios del agregado. `Notificacion` sí referencia al ticket porque es el efecto consultable por la API.
 
-| Tabla | Campo clave | Notas |
-|---|---|---|
-| `usuarios` | `email` único | Solicitantes o supervisores. |
-| `agentes` | `email` único, `nivel` | Nivel determina a qué escalamientos puede recibir. |
-| `sla_policies` | `prioridad` único | Minutos de primera respuesta y resolución por prioridad; seedeada. |
-| `tickets` | FKs a `usuarios`, `agentes` (nullable), `sla_policies` | `vence_sla_at` se calcula al crear/escalar según la política de SLA. |
-| `comentarios` | FK a `tickets` | Historial de seguimiento del ticket. |
-| `escalamientos` | FK a `tickets`, `agentes` (nullable) | Historial de cada escalamiento: de qué nivel a qué nivel y por qué. |
+## Invariantes relevantes
 
-## Estrategia de migraciones y seed
+- Emails de usuario/agente y prioridad SLA son únicos.
+- Un ticket siempre referencia solicitante y política SLA existentes.
+- `version` implementa comparación optimista durante el escalamiento.
+- `evento_id` único vuelve idempotente al consumidor.
+- Un agente de destino debe estar activo y pertenecer exactamente al nivel siguiente.
+- Un ticket cerrado es inmutable y los recursos con historial no se borran.
 
-- **Migraciones versionadas** con Prisma Migrate: cada cambio de esquema genera una carpeta en `prisma/migrations/<timestamp_o_nombre>/migration.sql`. La migración inicial es `prisma/migrations/0001_init/migration.sql`.
-- **Desarrollo:** `npx prisma migrate dev` (genera y aplica migraciones, actualiza el cliente Prisma).
-- **Despliegue (Docker):** el `Dockerfile` de la API ejecuta `npx prisma migrate deploy` al iniciar el contenedor, aplicando solo migraciones pendientes — seguro para reiniciar el compose sin perder datos.
-- **Seed:** `prisma/seed.js`, ejecutado manualmente con `npx prisma db seed` o `npm run prisma:seed`. Usa `upsert` para ser **idempotente**: crea las políticas de SLA (una por prioridad), agentes de ejemplo (N1/N2/N3), un usuario solicitante y un ticket de ejemplo, sin duplicar si se corre más de una vez.
+## Cálculo de SLA
+
+Al crear un ticket:
+
+```text
+venceSlaAt = instanteCreacion + slaPolicy.minutosResolucion
+```
+
+Para prioridades `ALTA` y `CRITICA` se permite escalamiento inmediato. Para `MEDIA` y `BAJA` se habilita al entrar en la ventana de riesgo:
+
+```text
+atRiskAt = venceSlaAt - slaPolicy.minutosPrimeraRespuesta
+```
+
+Escalar no reinicia el vencimiento: reiniciarlo ocultaría un incumplimiento y permitiría “ganar tiempo” mediante sucesivas escalaciones.
+
+## Transacción de escalamiento
+
+Con aislamiento `Serializable`:
+
+1. leer ticket con agente y política;
+2. validar invariantes;
+3. elegir/verificar agente de nivel siguiente;
+4. insertar historial `Escalamiento`;
+5. actualizar `Ticket` solo si `version` no cambió;
+6. insertar `EventoOutbox` con payload y correlation ID;
+7. commit único.
+
+Si cualquier paso falla, PostgreSQL revierte todos. La entrega a RabbitMQ ocurre después y no forma parte de la transacción SQL.
+
+## Seed reproducible
+
+`prisma/seed.js` usa `upsert` para SLA, usuarios y agentes, y comprueba la existencia del ticket de muestra. Puede ejecutarse en cada arranque sin duplicar datos funcionales.

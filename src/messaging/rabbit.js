@@ -3,39 +3,81 @@ const config = require('../config');
 
 let channel = null;
 let connection = null;
+let logger = null;
+let reconnectTimer = null;
+let closing = false;
 
-async function connect(logger) {
+function scheduleReconnect() {
+  if (closing || reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect(logger);
+  }, 5000);
+  reconnectTimer.unref?.();
+}
+
+async function connect(appLogger) {
+  logger = appLogger || logger;
+  if (channel || closing) return;
   try {
     connection = await amqplib.connect(config.rabbit.url);
-    channel = await connection.createChannel();
-    await channel.assertExchange(config.rabbit.exchange, 'topic', { durable: true });
-    logger?.info('Conectado a RabbitMQ y exchange declarado');
+    const candidateChannel = await connection.createConfirmChannel();
+    const deadExchange = `${config.rabbit.exchange}.dlx`;
+    const deadQueue = `${config.rabbit.queue}.dead`;
+    await candidateChannel.assertExchange(config.rabbit.exchange, 'topic', { durable: true });
+    await candidateChannel.assertExchange(deadExchange, 'topic', { durable: true });
+    await candidateChannel.assertQueue(deadQueue, { durable: true });
+    await candidateChannel.bindQueue(deadQueue, deadExchange, '#');
+    await candidateChannel.assertQueue(config.rabbit.queue, {
+      durable: true,
+      arguments: { 'x-dead-letter-exchange': deadExchange },
+    });
+    await candidateChannel.bindQueue(config.rabbit.queue, config.rabbit.exchange, 'ticket.escalado');
+    await candidateChannel.bindQueue(config.rabbit.queue, config.rabbit.exchange, 'ticket.cerrado');
+    channel = candidateChannel;
+    logger?.info({ exchange: config.rabbit.exchange }, 'Conexion a RabbitMQ establecida');
 
+    connection.on('error', (error) => logger?.error({ err: error }, 'Error de conexion RabbitMQ'));
     connection.on('close', () => {
       channel = null;
-      logger?.warn('Conexión a RabbitMQ cerrada');
+      connection = null;
+      logger?.warn('Conexion a RabbitMQ cerrada; se reintentara');
+      scheduleReconnect();
     });
   } catch (error) {
     channel = null;
-    logger?.error({ err: error }, 'No se pudo conectar a RabbitMQ');
+    await connection?.close().catch(() => {});
+    connection = null;
+    logger?.error({ err: error }, 'No se pudo conectar a RabbitMQ; se reintentara');
+    scheduleReconnect();
   }
 }
 
-// Publica un evento de dominio (ej: "ticket.escalado") en el exchange
-// topic de Mesa de ayuda. En la Entrega 2, un worker consumidor procesará
-// estos eventos (recordatorios, cálculo de vencimientos, notificaciones).
-function publishEvent(routingKey, payload) {
-  if (!channel) return false;
-
-  const body = Buffer.from(JSON.stringify(payload));
-  return channel.publish(config.rabbit.exchange, routingKey, body, {
+async function publishEvent(routingKey, event) {
+  if (!channel) throw new Error('RabbitMQ no esta conectado');
+  channel.publish(config.rabbit.exchange, routingKey, Buffer.from(JSON.stringify(event)), {
     contentType: 'application/json',
     persistent: true,
+    messageId: event.id,
+    correlationId: event.correlationId,
+    timestamp: Date.now(),
+    type: routingKey,
   });
+  await channel.waitForConfirms();
 }
 
 function isConnected() {
   return Boolean(channel);
 }
 
-module.exports = { connect, publishEvent, isConnected };
+async function close() {
+  closing = true;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  if (channel) await channel.close().catch(() => {});
+  if (connection) await connection.close().catch(() => {});
+  channel = null;
+  connection = null;
+}
+
+module.exports = { connect, publishEvent, isConnected, close };

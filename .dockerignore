@@ -4,3 +4,6 @@ npm-debug.log
 .git
 .gitignore
 docs
+coverage
+docs/evidencias/carga/results.jtl
+docs/evidencias/carga/html

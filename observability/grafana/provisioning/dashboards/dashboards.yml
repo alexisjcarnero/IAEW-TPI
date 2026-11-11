@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Mesa de ayuda
+    orgId: 1
+    folder: IAEW
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

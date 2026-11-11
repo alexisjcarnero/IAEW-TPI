@@ -1,6 +1,6 @@
 # ADR 0002 — Base de datos: PostgreSQL (relacional) con Prisma
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada e implementada
 - **Fecha:** 2026-09-24
 
 ## Contexto
@@ -18,6 +18,6 @@ Usar **PostgreSQL 16** como base de datos, con **Prisma** como ORM/migraciones (
 
 ## Consecuencias
 
-- Se gana integridad referencial (FKs) y consultas relacionales simples para el dashboard de observabilidad.
-- Prisma aporta migraciones versionadas (`prisma/migrations`) reproducibles vía `prisma migrate deploy`, alineado con el punto "modelo de datos + estrategia de migraciones" de la Entrega 1.
+- Se gana integridad referencial y soporte para la transacción serializable, outbox e idempotencia del consumidor.
+- Prisma aporta migraciones versionadas (`prisma/migrations`) reproducibles vía `prisma migrate deploy`.
 - Se agrega un servicio `db` (postgres:16-alpine) en `docker-compose.yml` con volumen persistente y healthcheck.

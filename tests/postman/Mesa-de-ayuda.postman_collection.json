@@ -1,0 +1,209 @@
+{
+  "info": {
+    "_postman_id": "e1346933-896e-4f12-9c70-iaew2026tpi",
+    "name": "IAEW 2026 - Mesa de ayuda - E2E",
+    "description": "Recorrido reproducible: OAuth, CRUD, asignacion, escalamiento, efecto asincronico, cierre y API key.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          "if (pm.info.requestName === '01 - Health publico' || !pm.collectionVariables.get('runId')) {",
+          "  pm.collectionVariables.set('runId', Date.now().toString());",
+          "}"
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "runId", "value": "" },
+    { "key": "usuarioId", "value": "" },
+    { "key": "agenteN1Id", "value": "" },
+    { "key": "agenteN2Id", "value": "" },
+    { "key": "ticketId", "value": "" },
+    { "key": "eventId", "value": "" },
+    { "key": "tempAgentId", "value": "" },
+    { "key": "tempTicketId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 - Health publico",
+      "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/health" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('API, DB y broker operativos', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('ok'); });"] } }]
+    },
+    {
+      "name": "02 - Obtener token OAuth client_credentials",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"client_id\": \"{{clientId}}\",\n  \"client_secret\": \"{{clientSecret}}\",\n  \"audience\": \"{{audience}}\",\n  \"grant_type\": \"client_credentials\"\n}"
+        },
+        "url": "https://{{auth0Domain}}/oauth/token"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Token emitido', () => pm.response.to.have.status(200));", "const json = pm.response.json();", "pm.expect(json.access_token).to.be.a('string');", "pm.environment.set('accessToken', json.access_token);"] } }]
+    },
+    {
+      "name": "03 - Crear usuario",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Solicitante Postman\",\n  \"email\": \"solicitante.{{runId}}@iaew.local\",\n  \"rol\": \"SOLICITANTE\"\n}" },
+        "url": "{{baseUrl}}/api/v1/usuarios"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Usuario creado', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('usuarioId', pm.response.json().id);"] } }]
+    },
+    {
+      "name": "04 - Crear agente N1",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Agente N1 Postman\",\n  \"email\": \"n1.{{runId}}@iaew.local\",\n  \"nivel\": \"N1\"\n}" },
+        "url": "{{baseUrl}}/api/v1/agentes"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Agente N1 creado', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('agenteN1Id', pm.response.json().id);"] } }]
+    },
+    {
+      "name": "05 - Crear agente N2",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Agente N2 Postman\",\n  \"email\": \"n2.{{runId}}@iaew.local\",\n  \"nivel\": \"N2\"\n}" },
+        "url": "{{baseUrl}}/api/v1/agentes"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Agente N2 creado', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('agenteN2Id', pm.response.json().id);"] } }]
+    },
+    {
+      "name": "06 - Crear ticket critico",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }, { "key": "x-correlation-id", "value": "demo-{{runId}}" }],
+        "body": { "mode": "raw", "raw": "{\n  \"titulo\": \"Sistema de facturacion caido\",\n  \"descripcion\": \"Todos los usuarios reciben error 500.\",\n  \"prioridad\": \"CRITICA\",\n  \"solicitanteId\": \"{{usuarioId}}\"\n}" },
+        "url": "{{baseUrl}}/api/v1/tickets"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket creado', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('ticketId', pm.response.json().id);", "pm.expect(pm.response.headers.get('x-correlation-id')).to.eql('demo-' + pm.collectionVariables.get('runId'));"] } }]
+    },
+    {
+      "name": "07 - Asignar agente N1",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"agenteId\": \"{{agenteN1Id}}\" }" },
+        "url": "{{baseUrl}}/api/v1/tickets/{{ticketId}}/asignacion"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket asignado en N1', () => { pm.response.to.have.status(200); const j = pm.response.json(); pm.expect(j.estado).to.eql('ASIGNADO'); pm.expect(j.nivelActual).to.eql('N1'); });"] } }]
+    },
+    {
+      "name": "08 - Escalar a N2 (transaccion + outbox)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }, { "key": "x-correlation-id", "value": "demo-{{runId}}" }],
+        "body": { "mode": "raw", "raw": "{\n  \"motivo\": \"Incidente critico requiere especialista\",\n  \"agenteDestinoId\": \"{{agenteN2Id}}\"\n}" },
+        "url": "{{baseUrl}}/api/v1/tickets/{{ticketId}}/escalamientos"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Escalamiento atomico creado', () => { pm.response.to.have.status(201); const j = pm.response.json(); pm.expect(j.ticket.nivelActual).to.eql('N2'); pm.expect(j.escalamiento.nivelDestino).to.eql('N2'); });", "pm.collectionVariables.set('eventId', pm.response.json().evento.id);"] } }]
+    },
+    {
+      "name": "09 - Ver efecto del consumidor",
+      "event": [
+        { "listen": "prerequest", "script": { "exec": ["setTimeout(() => {}, 2500);"] } },
+        { "listen": "test", "script": { "exec": ["pm.test('Worker persistio la notificacion', () => { pm.response.to.have.status(200); const data = pm.response.json().data; pm.expect(data.some(n => n.eventoId === pm.collectionVariables.get('eventId') && n.estado === 'ENVIADA')).to.be.true; });"] } }
+      ],
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/tickets/{{ticketId}}/notificaciones" }
+    },
+    {
+      "name": "10 - Resolver ticket",
+      "request": {
+        "method": "PATCH",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"estado\": \"RESUELTO\" }" },
+        "url": "{{baseUrl}}/api/v1/tickets/{{ticketId}}"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket resuelto', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().estado).to.eql('RESUELTO'); });"] } }]
+    },
+    {
+      "name": "11 - Cerrar ticket",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"resolucion\": \"Se restauro el servicio y se verifico con usuarios.\" }" },
+        "url": "{{baseUrl}}/api/v1/tickets/{{ticketId}}/cierre"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket cerrado', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().ticket.estado).to.eql('CERRADO'); });"] } }]
+    },
+    {
+      "name": "12 - Consultar recepciones del webhook",
+      "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{webhookBaseUrl}}/webhooks/mesa-ayuda/recepciones" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Canal externo recibio eventos firmados', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data.length).to.be.above(0); });"] } }]
+    },
+    {
+      "name": "13 - API key: politicas SLA",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "x-api-key", "value": "{{internalApiKey}}" }],
+        "url": "{{baseUrl}}/internal/sla-policies"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Endpoint interno acepta API key', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().data.length).to.eql(4); });"] } }]
+    },
+    {
+      "name": "14 - CRUD agente: crear temporal",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"nombre\": \"Agente Temporal\",\n  \"email\": \"temp.{{runId}}@iaew.local\",\n  \"nivel\": \"N3\"\n}" },
+        "url": "{{baseUrl}}/api/v1/agentes"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Agente temporal creado', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('tempAgentId', pm.response.json().id);"] } }]
+    },
+    {
+      "name": "15 - CRUD agente: leer",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/agentes/{{tempAgentId}}" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Agente leido', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('tempAgentId')); });"] } }]
+    },
+    {
+      "name": "16 - CRUD agente: actualizar",
+      "request": {
+        "method": "PATCH",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"nombre\": \"Agente Temporal Actualizado\", \"activo\": false }" },
+        "url": "{{baseUrl}}/api/v1/agentes/{{tempAgentId}}"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Agente actualizado', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().activo).to.be.false; });"] } }]
+    },
+    {
+      "name": "17 - CRUD agente: eliminar",
+      "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/agentes/{{tempAgentId}}" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Agente sin historial eliminado', () => pm.response.to.have.status(204));"] } }]
+    },
+    {
+      "name": "18 - CRUD ticket: crear temporal",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "content-type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"titulo\": \"Ticket temporal para probar DELETE\",\n  \"descripcion\": \"No tendra historial asociado.\",\n  \"prioridad\": \"BAJA\",\n  \"solicitanteId\": \"{{usuarioId}}\"\n}" },
+        "url": "{{baseUrl}}/api/v1/tickets"
+      },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket temporal creado', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('tempTicketId', pm.response.json().id);"] } }]
+    },
+    {
+      "name": "19 - CRUD ticket: leer",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/tickets/{{tempTicketId}}" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket leido', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('tempTicketId')); });"] } }]
+    },
+    {
+      "name": "20 - CRUD ticket: eliminar",
+      "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/tickets/{{tempTicketId}}" },
+      "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ticket abierto sin historial eliminado', () => pm.response.to.have.status(204));"] } }]
+    }
+  ]
+}

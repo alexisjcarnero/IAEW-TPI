@@ -4,7 +4,8 @@ const crypto = require('crypto');
 // correlacionar logs entre la API, el worker y el webhook receiver.
 function correlationId(req, res, next) {
   const incoming = req.get('x-correlation-id');
-  req.correlationId = incoming || crypto.randomUUID();
+  const valid = incoming && /^[A-Za-z0-9._:-]{1,128}$/.test(incoming);
+  req.correlationId = valid ? incoming : crypto.randomUUID();
   res.setHeader('x-correlation-id', req.correlationId);
   next();
 }

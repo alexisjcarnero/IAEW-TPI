@@ -1,53 +1,62 @@
-# C4 — Nivel 3: Componentes (contenedor API REST)
+# C4 — Nivel 3: Componentes
 
-Zoom dentro del contenedor "API REST".
+## Contenedor API
 
 ```mermaid
-C4Component
-    title Mesa de ayuda — Componentes de la API REST
+flowchart TB
+    routes["Routers Express\nTickets, agentes, usuarios, interno"]
+    auth["Middleware Auth0\nJWT + scopes"]
+    apikey["Middleware API key\ncomparación timing-safe"]
+    validation["Zod\nvalidación/normalización"]
+    service["TicketService\nreglas y transacciones"]
+    rules["EscalationRules\nfunciones de dominio testeables"]
+    prisma["Prisma Client"]
+    outbox["OutboxPublisher\npolling + confirm channel"]
+    rabbit["Rabbit adapter\nreconexión y publisher confirms"]
+    obs["Pino + correlation ID + métricas"]
+    errors["ErrorHandler\nRFC 9457"]
 
-    Container_Boundary(api, "API REST (Express)") {
-        Component(routerTickets, "Router de Tickets", "Express Router", "GET/POST/PATCH tickets, asignación, escalamiento, cierre, comentarios")
-        Component(routerAgentes, "Router de Agentes", "Express Router", "CRUD de agentes")
-        Component(routerUsuarios, "Router de Usuarios", "Express Router", "CRUD de usuarios; ejemplo con x-api-key")
-        Component(routerHealth, "Router de Health", "Express Router", "Healthcheck público de DB y broker")
-
-        Component(authMw, "Middleware Auth0", "express-oauth2-jwt-bearer", "Valida JWT (issuer, audience, firma, expiración) y scopes requeridos")
-        Component(apiKeyMw, "Middleware API Key", "Custom", "Valida header x-api-key para endpoints internos")
-        Component(correlationMw, "Middleware Correlation ID", "Custom", "Genera/propaga x-correlation-id para trazabilidad")
-        Component(errorMw, "Error Handler", "Custom", "Traduce errores a application/problem+json")
-
-        Component(escalationSvc, "EscalationService", "Módulo de dominio (Entrega 2)", "Valida prioridad/estado/responsable/SLA antes de escalar un ticket")
-        Component(eventPublisher, "EventPublisher", "amqplib wrapper", "Publica eventos de dominio en el exchange de RabbitMQ")
-        Component(webhookNotifier, "WebhookNotifier", "Custom (fetch + HMAC)", "Firma y envía el webhook saliente al canal externo")
-        Component(prismaClient, "Prisma Client", "ORM", "Acceso tipado a PostgreSQL")
-        Component(logger, "Logger", "pino / pino-http", "Logs JSON estructurados por request")
-    }
-
-    Rel(routerTickets, authMw, "usa")
-    Rel(routerAgentes, authMw, "usa")
-    Rel(routerUsuarios, authMw, "usa")
-    Rel(routerUsuarios, apiKeyMw, "usa (endpoint interno)")
-
-    Rel(routerTickets, escalationSvc, "delega reglas de escalamiento")
-    Rel(escalationSvc, eventPublisher, "publica ticket.escalado")
-    Rel(escalationSvc, webhookNotifier, "notifica canal externo")
-    Rel(routerTickets, prismaClient, "lee/escribe tickets")
-    Rel(routerAgentes, prismaClient, "lee/escribe agentes")
-    Rel(routerUsuarios, prismaClient, "lee/escribe usuarios")
-
-    Rel(correlationMw, logger, "enriquece contexto de logs")
-    Rel(errorMw, logger, "registra errores")
+    routes --> auth
+    routes --> apikey
+    routes --> validation
+    routes --> service
+    service --> rules
+    service --> prisma
+    outbox --> prisma
+    outbox --> rabbit
+    routes --> obs
+    routes --> errors
 ```
 
-## Componentes
+| Componente | Archivo principal | Motivo de separación |
+|---|---|---|
+| Routers | `src/routes/*.js` | Traduce HTTP a casos de uso; no contiene las reglas complejas. |
+| Validación | `src/validation/schemas.js` | Rechaza campos desconocidos y limita tamaños antes de tocar datos. |
+| Seguridad | `src/middleware/auth0.js`, `apiKey.js` | Centraliza autenticación y autorización. |
+| Servicio de tickets | `src/services/ticketService.js` | Coordina persistencia y transacciones. |
+| Reglas de escalamiento | `src/services/escalationRules.js` | Lógica pura con tests unitarios, independiente de Express/Prisma. |
+| Outbox publisher | `src/messaging/outboxPublisher.js` | Separa confirmación de negocio de disponibilidad del broker. |
+| Rabbit adapter | `src/messaging/rabbit.js` | Administra conexión, exchange y confirm channel. |
+| Observabilidad | `metrics.js`, `correlationId.js`, Pino | Mide y correlaciona sin contaminar reglas de dominio. |
+| Errores | `AppError.js`, `errorHandler.js` | Uniforma códigos y `application/problem+json`. |
 
-| Componente | Estado en Entrega 1 |
-|---|---|
-| Routers (tickets, agentes, usuarios, health) | Implementados; la mayoría de las operaciones responden `501` como esqueleto, salvo `GET /health` y `GET /api/v1/tickets`. |
-| Middleware Auth0 (`src/middleware/auth0.js`) | Implementado y reutilizado del proyecto de la materia. |
-| Middleware API Key (`src/middleware/apiKey.js`) | Implementado. |
-| Correlation ID / Error Handler | Implementados. |
-| EscalationService | Diseñado (ver ADR y OpenAPI); implementación funcional en la Entrega 2. |
-| EventPublisher (`src/messaging/rabbit.js`) | Implementado: conecta y declara el exchange; falta la lógica de publicación real del escalamiento. |
-| WebhookNotifier (`src/messaging/webhookNotifier.js`) | Implementado el envío firmado; falta invocarlo desde el flujo de escalamiento. |
+## Contenedor worker
+
+```mermaid
+flowchart LR
+    consumer["Consumer AMQP\nmanual ack/nack"]
+    idem["Control idempotente\neventoId UNIQUE"]
+    db[("Notificacion")]
+    signer["Webhook signer\nHMAC-SHA256"]
+    dlq["DLQ\ntras 3 intentos"]
+    metrics["Métricas y logs JSON"]
+
+    consumer --> idem --> db
+    db --> signer
+    signer -->|"2xx: ACK"| consumer
+    signer -->|"fallo: retry"| consumer
+    consumer -->|"3 fallos: NACK sin requeue"| dlq
+    consumer --> metrics
+```
+
+El worker es deliberadamente **at-least-once**: RabbitMQ puede reentregar. La restricción única `notificaciones.evento_id` hace que una reentrega ya completada se reconozca y se confirme sin duplicar el webhook.

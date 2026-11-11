@@ -1,12 +1,13 @@
 {
   "name": "mesa-ayuda-webhook-receiver",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Receptor placeholder que simula el canal externo (Slack/Teams) para la integración por Webhook firmado.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "prom-client": "^15.1.3"
   }
 }

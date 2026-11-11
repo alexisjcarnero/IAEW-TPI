@@ -1,25 +1,27 @@
-# ADR 0005 — Integración adicional: Webhook firmado (HMAC-SHA256)
+# ADR 0005 — Integración adicional por webhook HMAC-SHA256
 
-- **Estado:** Aceptada
-- **Fecha:** 2026-09-24
+- **Estado:** Aceptada e implementada
+- **Fecha:** 2026-09-24; actualizada 2026-11-10
 
 ## Contexto
 
-La consigna pide elegir una integración adicional: webhook con callback firmado/secreto, gRPC con proto/stub, o WebSocket con stream/suscripción. Para Mesa de ayuda, el enunciado del dominio sugiere "Webhook a canal externo, WebSocket de tablero o gRPC a usuarios".
+El dominio sugiere notificar un canal externo al escalar/cerrar. HTTP por sí solo no permite al receptor distinguir un emisor legítimo de una llamada falsificada.
 
 ## Decisión
 
-Implementar un **webhook saliente firmado** (`src/messaging/webhookNotifier.js`): cuando un ticket se escala o se cierra, la API hace `POST` al canal externo con el body JSON y un header `X-Signature-256: sha256=<hmac>`, calculado con un secreto compartido (`WEBHOOK_SECRET`). El receptor (simulado por el servicio `webhook-receiver`) recalcula el HMAC sobre el body crudo y lo compara con comparación de tiempo constante (`crypto.timingSafeEqual`) antes de aceptar el evento.
+El worker serializa el evento y calcula `HMAC-SHA256(WEBHOOK_SECRET, rawBody)`. Envía `X-Signature-256: sha256=<hex>`, `X-Event-Id` y `X-Correlation-Id`. El receptor calcula el HMAC sobre el mismo body crudo y compara bytes con `crypto.timingSafeEqual`.
+
+La firma cubre todo el evento, incluidos identificador, tipo, timestamp, correlation ID y datos. Una alteración de un solo byte invalida la petición.
 
 ## Alternativas consideradas
 
-- **WebSocket de tablero**: más vistoso para una demo en vivo, pero agrega un componente de estado (conexiones activas) más complejo de probar automáticamente con Postman/Newman.
-- **gRPC a usuarios**: requiere definir `.proto`, generar stubs y correr HTTP/2, mayor costo de configuración para el mismo objetivo funcional en esta entrega.
-
-El webhook firmado es el más simple de demostrar con `curl`/Postman y de verificar en un test automatizado (la firma es determinística).
+- WebSocket: útil para un tablero vivo, pero requiere administrar conexiones y no cubre tan directamente la notificación servicio-a-servicio.
+- gRPC: contrato fuerte, aunque agrega HTTP/2, proto y stubs sin beneficio claro en este caso.
+- API key simple en header: autentica por conocimiento del secreto pero no garantiza integridad del cuerpo.
 
 ## Consecuencias
 
-- Se agrega el servicio `webhook-receiver` al `docker-compose.yml` como placeholder del canal externo real.
-- El README debe documentar cómo se firma el payload y cómo probarlo manualmente.
-- Pendiente (Entrega 2): invocar `sendWebhook()` desde el flujo real de escalamiento/cierre de tickets, hoy stub.
+- El receptor debe conservar el body crudo; parsear y reserializar puede cambiar bytes.
+- El secreto nunca se envía ni se versiona.
+- HTTPS sigue siendo necesario en producción: HMAC aporta autenticidad/integridad, no confidencialidad.
+- Como mejora futura puede agregarse ventana temporal y nonce para prevenir replay fuera del control idempotente actual.

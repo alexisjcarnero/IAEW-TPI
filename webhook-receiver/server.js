@@ -1,23 +1,23 @@
-/**
- * Placeholder del canal externo (Slack/Teams simulado).
- *
- * Recibe el webhook que la API de Mesa de ayuda envía cuando un ticket se
- * escala o se cierra, verifica la firma HMAC-SHA256 (header
- * `X-Signature-256`, calculada sobre el body crudo con WEBHOOK_SECRET) y
- * loguea el evento recibido. En la Entrega 2 esto puede ampliarse para
- * publicar en un canal real.
- */
 const express = require('express');
-const crypto = require('crypto');
+const client = require('prom-client');
+const { verifyBodySignature } = require('./webhookSignature');
 
-const PORT = process.env.PORT || 4000;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'colocar-secreto-compartido-local';
-
+const PORT = Number(process.env.PORT || 4000);
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 const app = express();
+const receivedEvents = [];
+const acceptedEventIds = new Set();
 
-// Necesitamos el body crudo para poder verificar la firma HMAC.
+client.collectDefaultMetrics({ prefix: 'mesa_ayuda_webhook_' });
+const webhookRequests = new client.Counter({
+  name: 'mesa_ayuda_webhook_requests_total',
+  help: 'Webhooks recibidos por resultado de validacion.',
+  labelNames: ['result'],
+});
+
 app.use(
   express.json({
+    limit: '100kb',
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -25,38 +25,80 @@ app.use(
 );
 
 function verifySignature(req) {
-  const signatureHeader = req.get('X-Signature-256') || '';
-  const expected = crypto
-    .createHmac('sha256', WEBHOOK_SECRET)
-    .update(req.rawBody || Buffer.from(''))
-    .digest('hex');
-  const provided = signatureHeader.replace(/^sha256=/, '');
-
-  if (!/^[a-f0-9]{64}$/i.test(provided)) return false;
-  return crypto.timingSafeEqual(Buffer.from(provided, 'hex'), Buffer.from(expected, 'hex'));
+  return verifyBodySignature(
+    req.rawBody || Buffer.from(''),
+    req.get('X-Signature-256') || '',
+    WEBHOOK_SECRET
+  );
 }
 
 app.get('/health', (_req, res) => res.json({ status: 'up' }));
 
+app.get('/metrics', async (_req, res) => {
+  res.set('content-type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
+
+// Solo para la demo local: permite observar los ultimos eventos cuya firma fue valida.
+app.get('/webhooks/mesa-ayuda/recepciones', (_req, res) => {
+  res.json({ data: receivedEvents });
+});
+
 app.post('/webhooks/mesa-ayuda', (req, res) => {
   const valid = verifySignature(req);
-
-  console.log(
-    JSON.stringify({
-      level: valid ? 'info' : 'warn',
-      msg: valid ? 'webhook recibido' : 'firma de webhook inválida',
-      signatureValid: valid,
-      payload: req.body,
-      timestamp: new Date().toISOString(),
-    })
-  );
+  const log = {
+    level: valid ? 'info' : 'warn',
+    msg: valid ? 'webhook recibido' : 'firma de webhook invalida',
+    signatureValid: valid,
+    eventId: req.get('x-event-id'),
+    correlationId: req.get('x-correlation-id'),
+    eventType: req.body?.type,
+    timestamp: new Date().toISOString(),
+  };
+  console.log(JSON.stringify(log));
 
   if (!valid) {
-    return res.status(401).json({ error: 'firma inválida' });
+    webhookRequests.inc({ result: 'invalid' });
+    return res.status(401).type('application/problem+json').json({
+      type: 'https://mesa-ayuda.local/problems/invalid-webhook-signature',
+      title: 'Firma invalida',
+      status: 401,
+    });
   }
 
-  return res.status(200).json({ received: true });
+  if (acceptedEventIds.has(req.body.id)) {
+    webhookRequests.inc({ result: 'duplicate' });
+    return res.status(200).json({ received: true, duplicate: true, eventId: req.body.id });
+  }
+
+  webhookRequests.inc({ result: 'valid' });
+  acceptedEventIds.add(req.body.id);
+  receivedEvents.unshift({
+    eventId: req.body.id,
+    type: req.body.type,
+    subject: req.body.subject,
+    correlationId: req.body.correlationId,
+    receivedAt: new Date().toISOString(),
+  });
+  if (receivedEvents.length > 100) {
+    const removed = receivedEvents.splice(100);
+    for (const event of removed) acceptedEventIds.delete(event.eventId);
+  }
+  return res.status(202).json({ received: true, eventId: req.body.id });
 });
+
+app.use((err, req, res, _next) => {
+  console.log(JSON.stringify({ level: 'error', msg: err.message, timestamp: new Date().toISOString() }));
+  res.status(400).type('application/problem+json').json({
+    type: 'https://mesa-ayuda.local/problems/invalid-json',
+    title: 'JSON invalido',
+    status: 400,
+  });
+});
+
+if (!WEBHOOK_SECRET) {
+  console.log(JSON.stringify({ level: 'warn', msg: 'WEBHOOK_SECRET no configurado; todas las firmas fallaran' }));
+}
 
 app.listen(PORT, () => {
   console.log(JSON.stringify({ level: 'info', msg: `webhook-receiver escuchando en :${PORT}` }));

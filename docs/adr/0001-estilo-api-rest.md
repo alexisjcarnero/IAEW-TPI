@@ -1,6 +1,6 @@
 # ADR 0001 — Estilo de API: REST (no gRPC) con convenciones consistentes
 
-- **Estado:** Aceptada
+- **Estado:** Aceptada e implementada
 - **Fecha:** 2026-09-24
 
 ## Contexto
@@ -27,4 +27,4 @@ La integración adicional elegida (webhook saliente firmado) es HTTP simple, coh
 
 - Se puede documentar con OpenAPI 3.1 estándar y probar con una colección Postman convencional.
 - Cada operación sensible (asignar, escalar, cerrar) tiene su propio endpoint, lo que permite asignar un scope distinto a cada una (`assign:tickets`, `write:tickets`, `close:tickets`).
-- Si en la Entrega 2 se agrega gRPC como integración adicional (opción permitida por la consigna), convivirá como un contenedor aparte sin afectar el contrato REST.
+- La integración adicional se resolvió con webhook firmado; gRPC no es necesario para cumplir el alcance.

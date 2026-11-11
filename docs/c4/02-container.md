@@ -1,42 +1,52 @@
 # C4 — Nivel 2: Contenedores
 
-Zoom dentro del sistema Mesa de ayuda: los procesos/servicios que lo componen y cómo se despliegan (ver `docker-compose.yml`).
+Esta vista coincide con los servicios declarados en `docker-compose.yml`.
 
 ```mermaid
-C4Container
-    title Mesa de ayuda — Diagrama de Contenedores
+flowchart LR
+    cliente["Cliente / Postman"]
+    auth0["Auth0\nAuthorization Server"]
+    canal["Webhook receiver\nNode.js / Express"]
 
-    Person(solicitante, "Solicitante")
-    Person(agente, "Agente / Supervisor")
-    System_Ext(auth0, "Auth0")
-    System_Ext(canalExterno, "Canal externo")
+    subgraph sistema["Sistema Mesa de ayuda"]
+      api["API REST\nNode.js 20 / Express\nPuerto 3000"]
+      db[("PostgreSQL 16\nDatos + outbox + notificaciones")]
+      rabbit["RabbitMQ 4.x\nExchange topic + cola + DLQ"]
+      worker["Worker\nNode.js 20 / amqplib\nConsumidor idempotente"]
+      prometheus["Prometheus\nSeries temporales"]
+      grafana["Grafana\nDashboard provisionado"]
+    end
 
-    System_Boundary(mesaAyuda, "Sistema Mesa de ayuda") {
-        Container(api, "API REST", "Node.js 20 / Express", "Expone /api/v1/tickets, /agentes, /usuarios. Valida JWT y scopes, aplica reglas de negocio y SLA")
-        Container(worker, "Worker de SLA / notificaciones", "Node.js (Entrega 2)", "Consume eventos de RabbitMQ (ticket.escalado) y calcula vencimientos / dispara recordatorios")
-        ContainerDb(db, "Base de datos", "PostgreSQL 16", "Persiste usuarios, agentes, tickets, comentarios, escalamientos y políticas de SLA")
-        Container(broker, "Broker de mensajería", "RabbitMQ 4.x", "Exchange topic 'mesa-ayuda.eventos' para desacoplar la API del procesamiento asíncrono")
-        Container(webhookReceiver, "Webhook receiver", "Node.js / Express (placeholder)", "Simula el canal externo; verifica la firma HMAC del webhook entrante")
-    }
-
-    Rel(solicitante, api, "HTTPS/JSON")
-    Rel(agente, api, "HTTPS/JSON + Bearer JWT")
-    Rel(api, auth0, "Valida JWT (JWKS)")
-    Rel(api, db, "Lee/escribe vía Prisma Client", "SQL/TCP 5432")
-    Rel(api, broker, "Publica eventos de dominio", "AMQP 5672")
-    Rel(worker, broker, "Consume eventos", "AMQP 5672")
-    Rel(api, webhookReceiver, "POST webhook firmado", "HTTP + HMAC-SHA256")
-    Rel(webhookReceiver, canalExterno, "Reenvía notificación (fuera de alcance de la Entrega 1)")
+    cliente -->|"REST + JWT"| api
+    cliente -->|"client_credentials"| auth0
+    api -->|"OIDC/JWKS"| auth0
+    api -->|"Prisma/SQL"| db
+    api -->|"AMQP + publisher confirms"| rabbit
+    rabbit -->|"ack/nack, prefetch 5"| worker
+    worker -->|"Prisma/SQL"| db
+    worker -->|"HTTP + HMAC-SHA256"| canal
+    api -->|"/metrics"| prometheus
+    worker -->|"/metrics"| prometheus
+    canal -->|"/metrics"| prometheus
+    prometheus -->|"PromQL"| grafana
 ```
 
-## Contenedores
+## Catálogo de contenedores
 
-| Contenedor | Tecnología | Responsabilidad |
-|---|---|---|
-| API REST | Node.js / Express | Expone el contrato OpenAPI, valida seguridad (Auth0/JWT + `x-api-key`), orquesta reglas de negocio. |
-| Base de datos | PostgreSQL 16 + Prisma | Persistencia relacional de tickets, usuarios, agentes, comentarios, escalamientos y SLA. |
-| Broker | RabbitMQ 4.x | Desacopla la emisión del evento `ticket.escalado` de su procesamiento asíncrono. |
-| Worker de SLA/notificaciones | Node.js (a implementar en la Entrega 2) | Consumidor del exchange; calcula vencimientos y dispara notificaciones. |
-| Webhook receiver | Node.js / Express | Placeholder del canal externo; valida la firma HMAC del webhook saliente de la API. |
+| Contenedor | Tecnología | Responsabilidad | Persistencia |
+|---|---|---|---|
+| API | Express, Prisma, Zod, Pino | REST, autenticación/autorización, reglas de aplicación, transacción y outbox. | PostgreSQL. |
+| Worker | Node.js, amqplib, Prisma | Consumir eventos, deduplicar, persistir efecto y enviar webhook. | PostgreSQL por `evento_id` único. |
+| Webhook receiver | Express, crypto | Verificar HMAC sobre body crudo y simular canal externo. | Últimas 100 recepciones en memoria; logs JSON. |
+| PostgreSQL | 16-alpine | Entidades, historial, SLA, outbox y notificaciones. | Volumen Docker. |
+| RabbitMQ | 4.2-management | Exchange topic, cola durable y dead-letter queue. | Volumen Docker. |
+| Prometheus | 3.x | Scraping y almacenamiento de métricas. | Volumen Docker, retención 7 días. |
+| Grafana | 12.x | Dashboard p95/throughput/error rate. | Provisioning versionado y volumen. |
 
-Todos los contenedores corren en contenedores Docker separados y se orquestan con `docker-compose.yml` en la raíz del repositorio.
+## Protocolos
+
+- HTTP/JSON para API y webhook.
+- OAuth 2.0 sobre HTTPS con Auth0.
+- AMQP 0-9-1 entre API/worker y RabbitMQ.
+- SQL/TCP entre Prisma y PostgreSQL.
+- Exposición Prometheus para métricas.

@@ -34,12 +34,18 @@ enum EstadoTicket {
   CERRADO
 }
 
+enum EstadoNotificacion {
+  PENDIENTE
+  ENVIADA
+  FALLIDA
+}
+
 model Usuario {
-  id        String     @id @default(uuid())
-  nombre    String
-  email     String     @unique
-  rol       RolUsuario @default(SOLICITANTE)
-  creadoEn  DateTime   @default(now()) @map("creado_en")
+  id       String     @id @default(uuid())
+  nombre   String
+  email    String     @unique
+  rol      RolUsuario @default(SOLICITANTE)
+  creadoEn DateTime   @default(now()) @map("creado_en")
 
   tickets Ticket[]
 
@@ -61,10 +67,10 @@ model Agente {
 }
 
 model SlaPolicy {
-  id                    String    @id @default(uuid())
-  prioridad             Prioridad @unique
-  minutosPrimeraRespuesta Int     @map("minutos_primera_respuesta")
-  minutosResolucion      Int      @map("minutos_resolucion")
+  id                      String    @id @default(uuid())
+  prioridad               Prioridad @unique
+  minutosPrimeraRespuesta Int       @map("minutos_primera_respuesta")
+  minutosResolucion       Int       @map("minutos_resolucion")
 
   tickets Ticket[]
 
@@ -72,54 +78,94 @@ model SlaPolicy {
 }
 
 model Ticket {
-  id               String       @id @default(uuid())
-  titulo           String
-  descripcion      String
-  prioridad        Prioridad    @default(MEDIA)
-  estado           EstadoTicket @default(ABIERTO)
-  nivelActual      NivelAgente  @default(N1) @map("nivel_actual")
+  id          String       @id @default(uuid())
+  titulo      String
+  descripcion String
+  prioridad   Prioridad    @default(MEDIA)
+  estado      EstadoTicket @default(ABIERTO)
+  nivelActual NivelAgente  @default(N1) @map("nivel_actual")
 
-  solicitanteId    String       @map("solicitante_id")
-  solicitante      Usuario      @relation(fields: [solicitanteId], references: [id])
+  solicitanteId String  @map("solicitante_id")
+  solicitante   Usuario @relation(fields: [solicitanteId], references: [id])
 
-  agenteAsignadoId String?      @map("agente_asignado_id")
-  agenteAsignado   Agente?      @relation("AgenteAsignado", fields: [agenteAsignadoId], references: [id])
+  agenteAsignadoId String? @map("agente_asignado_id")
+  agenteAsignado   Agente? @relation("AgenteAsignado", fields: [agenteAsignadoId], references: [id])
 
-  slaPolicyId      String       @map("sla_policy_id")
-  slaPolicy        SlaPolicy    @relation(fields: [slaPolicyId], references: [id])
+  slaPolicyId String    @map("sla_policy_id")
+  slaPolicy   SlaPolicy @relation(fields: [slaPolicyId], references: [id])
 
-  venceSlaAt       DateTime?    @map("vence_sla_at")
-  creadoEn         DateTime     @default(now()) @map("creado_en")
-  actualizadoEn    DateTime     @updatedAt @map("actualizado_en")
-  cerradoEn        DateTime?    @map("cerrado_en")
+  venceSlaAt    DateTime? @map("vence_sla_at")
+  creadoEn      DateTime  @default(now()) @map("creado_en")
+  actualizadoEn DateTime  @updatedAt @map("actualizado_en")
+  cerradoEn     DateTime? @map("cerrado_en")
+  version       Int       @default(1)
 
-  comentarios   Comentario[]
-  escalamientos Escalamiento[]
+  comentarios    Comentario[]
+  escalamientos  Escalamiento[]
+  notificaciones Notificacion[]
 
+  @@index([estado])
+  @@index([prioridad])
+  @@index([venceSlaAt])
   @@map("tickets")
 }
 
 model Comentario {
-  id        String   @id @default(uuid())
-  ticketId  String   @map("ticket_id")
-  ticket    Ticket   @relation(fields: [ticketId], references: [id])
-  autor     String
-  texto     String
-  creadoEn  DateTime @default(now()) @map("creado_en")
+  id       String   @id @default(uuid())
+  ticketId String   @map("ticket_id")
+  ticket   Ticket   @relation(fields: [ticketId], references: [id])
+  autor    String
+  texto    String
+  creadoEn DateTime @default(now()) @map("creado_en")
 
   @@map("comentarios")
 }
 
 model Escalamiento {
-  id             String      @id @default(uuid())
-  ticketId       String      @map("ticket_id")
-  ticket         Ticket      @relation(fields: [ticketId], references: [id])
-  nivelOrigen    NivelAgente @map("nivel_origen")
-  nivelDestino   NivelAgente @map("nivel_destino")
-  agenteDestinoId String?    @map("agente_destino_id")
-  agenteDestino   Agente?    @relation("AgenteDestino", fields: [agenteDestinoId], references: [id])
-  motivo         String
-  creadoEn       DateTime    @default(now()) @map("creado_en")
+  id              String      @id @default(uuid())
+  ticketId        String      @map("ticket_id")
+  ticket          Ticket      @relation(fields: [ticketId], references: [id])
+  nivelOrigen     NivelAgente @map("nivel_origen")
+  nivelDestino    NivelAgente @map("nivel_destino")
+  agenteDestinoId String?     @map("agente_destino_id")
+  agenteDestino   Agente?     @relation("AgenteDestino", fields: [agenteDestinoId], references: [id])
+  motivo          String
+  creadoEn        DateTime    @default(now()) @map("creado_en")
 
   @@map("escalamientos")
+}
+
+/// Evento persistido en la misma transaccion de negocio. El publicador de
+/// outbox lo entrega a RabbitMQ y marca `publicadoEn` solo tras el confirm.
+model EventoOutbox {
+  id            String    @id @default(uuid())
+  tipo          String
+  agregadoId    String    @map("agregado_id")
+  payload       Json
+  correlationId String    @map("correlation_id")
+  intentos      Int       @default(0)
+  creadoEn      DateTime  @default(now()) @map("creado_en")
+  publicadoEn   DateTime? @map("publicado_en")
+
+  @@index([publicadoEn, creadoEn])
+  @@map("eventos_outbox")
+}
+
+/// Efecto observable del consumidor asincronico. `eventoId` unico hace al
+/// procesamiento idempotente frente a reentregas de RabbitMQ.
+model Notificacion {
+  id            String             @id @default(uuid())
+  eventoId      String             @unique @map("evento_id")
+  ticketId      String             @map("ticket_id")
+  ticket        Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  tipo          String
+  mensaje       String
+  estado        EstadoNotificacion @default(PENDIENTE)
+  intentos      Int                @default(0)
+  webhookStatus Int?               @map("webhook_status")
+  creadoEn      DateTime           @default(now()) @map("creado_en")
+  procesadoEn   DateTime?          @map("procesado_en")
+
+  @@index([ticketId, creadoEn])
+  @@map("notificaciones")
 }

@@ -1,90 +1,127 @@
 const express = require('express');
-const { prisma } = require('../db');
-const { requireScope } = require('../middleware/auth0');
+
+const { requireScope, requireScopes } = require('../middleware/auth0');
+const { validate } = require('../middleware/validate');
+const { asyncHandler } = require('../http/asyncHandler');
+const schemas = require('../validation/schemas');
+const tickets = require('../services/ticketService');
+const outbox = require('../messaging/outboxPublisher');
+const { ticketsCreated, ticketsEscalated } = require('../middleware/metrics');
 
 const router = express.Router();
-const estadosPermitidos = new Set(['ABIERTO', 'ASIGNADO', 'EN_PROGRESO', 'ESCALADO', 'RESUELTO', 'CERRADO']);
-const prioridadesPermitidas = new Set(['BAJA', 'MEDIA', 'ALTA', 'CRITICA']);
 
-// GET /api/v1/tickets — implementado para probar el camino end-to-end
-// (Auth0 -> API -> PostgreSQL). El resto de las operaciones de negocio
-// quedan como esqueleto (501) para la Entrega 2.
-router.get('/tickets', requireScope('read:tickets'), async (req, res, next) => {
-  const { estado, prioridad } = req.query;
+router.get(
+  '/tickets',
+  requireScope('read:tickets'),
+  validate(schemas.ticketQuery, 'query'),
+  asyncHandler(async (req, res) => {
+    res.json({ data: await tickets.list(req.query) });
+  })
+);
 
-  if (estado !== undefined && !estadosPermitidos.has(estado)) {
-    return res.status(400).type('application/problem+json').json({
-      type: 'about:blank',
-      title: 'Estado de ticket inválido',
-      status: 400,
-      correlationId: req.correlationId,
+router.post(
+  '/tickets',
+  requireScope('write:tickets'),
+  validate(schemas.ticketCreate),
+  asyncHandler(async (req, res) => {
+    const ticket = await tickets.create(req.body);
+    ticketsCreated.inc();
+    res.location(`/api/v1/tickets/${ticket.id}`).status(201).json(ticket);
+  })
+);
+
+router.get(
+  '/tickets/:id',
+  requireScope('read:tickets'),
+  validate(schemas.idParams, 'params'),
+  asyncHandler(async (req, res) => res.json(await tickets.get(req.params.id)))
+);
+
+router.patch(
+  '/tickets/:id',
+  requireScope('write:tickets'),
+  validate(schemas.idParams, 'params'),
+  validate(schemas.ticketUpdate),
+  asyncHandler(async (req, res) => res.json(await tickets.update(req.params.id, req.body)))
+);
+
+router.delete(
+  '/tickets/:id',
+  requireScope('write:tickets'),
+  validate(schemas.idParams, 'params'),
+  asyncHandler(async (req, res) => {
+    await tickets.remove(req.params.id);
+    res.status(204).end();
+  })
+);
+
+router.post(
+  '/tickets/:id/asignacion',
+  requireScope('assign:tickets'),
+  validate(schemas.idParams, 'params'),
+  validate(schemas.asignacionCreate),
+  asyncHandler(async (req, res) => res.json(await tickets.assign(req.params.id, req.body.agenteId)))
+);
+
+router.post(
+  '/tickets/:id/escalamientos',
+  requireScopes('write:tickets', 'assign:tickets'),
+  validate(schemas.idParams, 'params'),
+  validate(schemas.escalamientoCreate),
+  asyncHandler(async (req, res) => {
+    const result = await tickets.escalate(req.params.id, req.body, req.correlationId);
+    ticketsEscalated.inc({
+      nivel_origen: result.escalation.nivelOrigen,
+      nivel_destino: result.escalation.nivelDestino,
     });
-  }
-
-  if (prioridad !== undefined && !prioridadesPermitidas.has(prioridad)) {
-    return res.status(400).type('application/problem+json').json({
-      type: 'about:blank',
-      title: 'Prioridad inválida',
-      status: 400,
-      correlationId: req.correlationId,
+    outbox.flushOnce(req.log, [result.eventId]).catch((error) => {
+      req.log.warn({ err: error, eventId: result.eventId }, 'El evento quedo pendiente en outbox');
     });
-  }
-
-  try {
-    const tickets = await prisma.ticket.findMany({
-      where: {
-        ...(estado !== undefined && { estado }),
-        ...(prioridad !== undefined && { prioridad }),
-      },
-      include: { solicitante: true, agenteAsignado: true, slaPolicy: true },
-      orderBy: { creadoEn: 'desc' },
-      take: 50,
+    res.status(201).json({
+      ticket: result.ticket,
+      escalamiento: result.escalation,
+      evento: { id: result.eventId, estado: 'PENDIENTE_O_PUBLICADO' },
     });
-    res.json({ data: tickets });
-  } catch (error) {
-    next(error);
-  }
-});
+  })
+);
 
-router.get('/tickets/:id', requireScope('read:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
+router.post(
+  '/tickets/:id/cierre',
+  requireScope('close:tickets'),
+  validate(schemas.idParams, 'params'),
+  validate(schemas.cierreCreate),
+  asyncHandler(async (req, res) => {
+    const result = await tickets.close(req.params.id, req.body, req.correlationId);
+    outbox.flushOnce(req.log, [result.eventId]).catch((error) => {
+      req.log.warn({ err: error, eventId: result.eventId }, 'El evento quedo pendiente en outbox');
+    });
+    res.json({ ticket: result.ticket, evento: { id: result.eventId, estado: 'PENDIENTE_O_PUBLICADO' } });
+  })
+);
 
-router.post('/tickets', requireScope('write:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
+router.get(
+  '/tickets/:id/comentarios',
+  requireScope('read:tickets'),
+  validate(schemas.idParams, 'params'),
+  asyncHandler(async (req, res) => res.json({ data: await tickets.listComments(req.params.id) }))
+);
 
-router.patch('/tickets/:id', requireScope('write:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
+router.post(
+  '/tickets/:id/comentarios',
+  requireScope('write:tickets'),
+  validate(schemas.idParams, 'params'),
+  validate(schemas.comentarioCreate),
+  asyncHandler(async (req, res) => {
+    const comment = await tickets.addComment(req.params.id, req.body);
+    res.status(201).json(comment);
+  })
+);
 
-router.delete('/tickets/:id', requireScope('write:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
-
-// Flujo multi-paso: asignar un agente al ticket.
-router.post('/tickets/:id/asignacion', requireScope('assign:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
-
-// Flujo multi-paso: escalar el ticket validando prioridad, estado,
-// responsable y reglas de SLA. Emite el evento `ticket.escalado` (RabbitMQ)
-// y dispara el webhook firmado al canal externo. Se implementa en la
-// Entrega 2.
-router.post('/tickets/:id/escalamientos', requireScope(['write:tickets', 'assign:tickets']), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
-
-router.post('/tickets/:id/cierre', requireScope('close:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
-
-router.get('/tickets/:id/comentarios', requireScope('read:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
-
-router.post('/tickets/:id/comentarios', requireScope('write:tickets'), (_req, res) => {
-  res.status(501).json({ title: 'No implementado en la Entrega 1', status: 501 });
-});
+router.get(
+  '/tickets/:id/notificaciones',
+  requireScope('read:tickets'),
+  validate(schemas.idParams, 'params'),
+  asyncHandler(async (req, res) => res.json({ data: await tickets.listNotifications(req.params.id) }))
+);
 
 module.exports = router;
