@@ -103,6 +103,7 @@ RabbitMQ contiene:
 - exchange topic `mesa-ayuda.eventos`;
 - cola durable `mesa-ayuda.notificaciones`;
 - bindings para `ticket.escalado` y `ticket.cerrado`;
+- tres colas durables de reintento con TTL de 2, 4 y 8 segundos;
 - dead-letter exchange/queue;
 - ACK manual y `prefetch(5)`.
 
@@ -114,10 +115,13 @@ El worker (`worker/index.js`) procesa con semántica at-least-once:
 4. si es nueva, crea `PENDIENTE`;
 5. incrementa intentos y envía webhook;
 6. en `2xx`, marca `ENVIADA` y ACK;
-7. ante fallo, reencola mientras haya menos de tres intentos;
-8. al tercer fallo, NACK sin requeue y RabbitMQ la mueve a DLQ.
+7. ante un fallo transitorio, publica el mismo evento en la cola de espera correspondiente y hace ACK del original solo tras la confirmación del broker;
+8. al vencer el TTL, RabbitMQ lo devuelve a la cola principal; `x-retry-count` permite hasta tres reintentos (cuatro intentos en total);
+9. ante evento inválido, HTTP permanente o cuarto fallo transitorio, NACK sin requeue y RabbitMQ lo mueve a DLQ.
 
 La restricción única sobre `eventoId` es la base técnica de la idempotencia.
+
+El backoff exponencial evita el bucle de redeliveries inmediatas cuando el webhook está caído. Las colas se declaran tanto desde la API como desde el worker en `shared/rabbitTopology.js`, para que existan incluso si el productor arranca primero. Los reintentos se cuentan en AMQP, no solo en PostgreSQL: una caída de DB no reinicia el presupuesto. Un ACK perdido después de confirmar la copia puede causar un duplicado, por eso se conserva `event.id` y el consumidor reconoce una notificación ya `ENVIADA`. No se usa `setTimeout` en el worker, porque retendría un mensaje sin ACK y no sobreviviría al reinicio.
 
 ### 3.6 Webhook
 
@@ -393,7 +397,7 @@ El negocio confirma y el evento queda con `publicadoEn = null`. El publisher lo 
 
 ### “¿Qué pasa si el webhook está caído?”
 
-El worker registra el intento, reencola hasta tres veces y finalmente envía a DLQ. El ticket no se revierte porque la notificación es eventual.
+El worker registra el intento, lo difiere 2, 4 y 8 segundos si el fallo es transitorio y finalmente envía a DLQ tras el cuarto fallo. Un `4xx` permanente va a DLQ sin reintentar. El ticket no se revierte porque la notificación es eventual.
 
 ### “¿Por qué no resetear el SLA al escalar?”
 

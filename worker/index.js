@@ -4,6 +4,7 @@ const pino = require('pino');
 const client = require('prom-client');
 const { PrismaClient } = require('@prisma/client');
 const { signBody } = require('./webhookSignature');
+const { RETRY_DELAYS_MS, retryQueueName, assertTopology } = require('./rabbitTopology');
 
 const config = {
   rabbitUrl: process.env.RABBIT_URL || 'amqp://iaew:iaew-local@rabbitmq:5672',
@@ -20,6 +21,7 @@ const prisma = new PrismaClient();
 let connection;
 let channel;
 let ready = false;
+let stopping = false;
 
 client.collectDefaultMetrics({ prefix: 'mesa_ayuda_worker_' });
 const processed = new client.Counter({
@@ -38,6 +40,44 @@ function notificationMessage(event) {
     return `Ticket escalado de ${event.data.nivelOrigen} a ${event.data.nivelDestino}: ${event.data.motivo}`;
   }
   return `Ticket cerrado: ${event.data.resolucion}`;
+}
+
+function failure(message, retryable) {
+  const error = new Error(message);
+  error.retryable = retryable;
+  return error;
+}
+
+function retryCountOf(message) {
+  const count = Number(message.properties.headers?.['x-retry-count'] ?? 0);
+  return Number.isSafeInteger(count) && count >= 0 ? count : RETRY_DELAYS_MS.length;
+}
+
+function acknowledgeOrExit(message, eventId) {
+  try {
+    channel.ack(message);
+  } catch (error) {
+    ready = false;
+    logger.fatal({ err: error, eventId }, 'No se pudo confirmar el consumo');
+    process.exit(1);
+  }
+}
+
+async function scheduleRetry(message, event, retryCount) {
+  const retryQueue = retryQueueName(config.queue, retryCount);
+  await new Promise((resolve, reject) => {
+    channel.sendToQueue(retryQueue, message.content, {
+      persistent: true,
+      contentType: message.properties.contentType || 'application/json',
+      messageId: message.properties.messageId || event.id,
+      correlationId: message.properties.correlationId || event.correlationId,
+      type: message.properties.type || event.type,
+      headers: { 'x-retry-count': retryCount + 1 },
+    }, (error) => (error ? reject(error) : resolve()));
+  });
+  // Un ACK perdido puede duplicar la entrega, pero nunca se confirma antes de publicar.
+  acknowledgeOrExit(message, event.id);
+  return RETRY_DELAYS_MS[retryCount];
 }
 
 async function sendWebhook(event) {
@@ -65,13 +105,23 @@ async function sendWebhook(event) {
 async function consumeMessage(message) {
   let event;
   try {
-    event = JSON.parse(message.content.toString('utf8'));
-    if (!event.id || !event.type || !event.data?.ticketId) throw new Error('Evento invalido');
+    try {
+      event = JSON.parse(message.content.toString('utf8'));
+    } catch (_error) {
+      throw failure('JSON del evento invalido', false);
+    }
+    if (
+      !event || typeof event !== 'object' || typeof event.id !== 'string' || !event.id ||
+      !['ticket.escalado', 'ticket.cerrado'].includes(event.type) ||
+      typeof event.data?.ticketId !== 'string' || !event.data.ticketId
+    ) {
+      throw failure('Evento invalido', false);
+    }
 
     let notification = await prisma.notificacion.findUnique({ where: { eventoId: event.id } });
     if (notification?.estado === 'ENVIADA') {
       processed.inc({ type: event.type, result: 'duplicate' });
-      channel.ack(message);
+      acknowledgeOrExit(message, event.id);
       return;
     }
     if (!notification) {
@@ -100,49 +150,64 @@ async function consumeMessage(message) {
       },
     });
 
-    if (!succeeded) throw new Error(`Webhook respondio ${status}`);
+    if (!succeeded) {
+      throw failure(`Webhook respondio ${status}`, status === 408 || status === 429 || status >= 500);
+    }
     processed.inc({ type: event.type, result: 'success' });
     logger.info(
       { eventId: event.id, type: event.type, correlationId: event.correlationId, webhookStatus: status },
       'Evento procesado'
     );
-    channel.ack(message);
+    acknowledgeOrExit(message, event.id);
   } catch (error) {
-    const attempts = event?.id
-      ? await prisma.notificacion
-          .update({
-            where: { eventoId: event.id },
-            data: { estado: 'FALLIDA' },
-            select: { intentos: true },
-          })
-          .catch(() => null)
-      : null;
-    const retry = Boolean(attempts && attempts.intentos < 3);
-    processed.inc({ type: event?.type || 'invalid', result: retry ? 'retry' : 'dead_letter' });
+    if (event?.id) {
+      await prisma.notificacion.update({
+        where: { eventoId: event.id },
+        data: { estado: 'FALLIDA' },
+      }).catch(() => {});
+    }
+
+    const retryCount = retryCountOf(message);
+    const retry = error.retryable !== false && retryCount < RETRY_DELAYS_MS.length;
+    if (retry) {
+      try {
+        const delayMs = await scheduleRetry(message, event, retryCount);
+        processed.inc({ type: event.type, result: 'retry' });
+        logger.warn(
+          { err: error, eventId: event.id, correlationId: event.correlationId, retryNumber: retryCount + 1, delayMs },
+          'Fallo temporal; evento programado para reintento'
+        );
+        return;
+      } catch (publishError) {
+        // Sin confirmacion no se hace ACK: al cerrar la conexion RabbitMQ reentrega el original.
+        ready = false;
+        logger.fatal({ err: publishError, eventId: event.id }, 'No se pudo confirmar el reintento');
+        process.exit(1);
+      }
+    }
+
+    processed.inc({ type: event?.type || 'invalid', result: 'dead_letter' });
     logger.error(
-      { err: error, eventId: event?.id, correlationId: event?.correlationId, retry },
-      retry ? 'Fallo temporal; evento reencolado' : 'Evento enviado a dead-letter queue'
+      { err: error, eventId: event?.id, correlationId: event?.correlationId, retryCount },
+      'Evento enviado a dead-letter queue'
     );
-    channel.nack(message, false, retry);
+    channel.nack(message, false, false);
   }
 }
 
 async function startConsumer() {
   if (!config.webhookSecret) throw new Error('WEBHOOK_SECRET es obligatorio');
   connection = await amqplib.connect(config.rabbitUrl);
-  channel = await connection.createChannel();
-  const deadExchange = `${config.exchange}.dlx`;
-  const deadQueue = `${config.queue}.dead`;
-  await channel.assertExchange(config.exchange, 'topic', { durable: true });
-  await channel.assertExchange(deadExchange, 'topic', { durable: true });
-  await channel.assertQueue(deadQueue, { durable: true });
-  await channel.bindQueue(deadQueue, deadExchange, '#');
-  await channel.assertQueue(config.queue, {
-    durable: true,
-    arguments: { 'x-dead-letter-exchange': deadExchange },
+  connection.on('error', (error) => logger.error({ err: error }, 'Error de conexion RabbitMQ'));
+  connection.on('close', () => {
+    ready = false;
+    if (!stopping) {
+      logger.fatal('Conexion RabbitMQ cerrada; reiniciando worker para recuperar consumo');
+      process.exit(1);
+    }
   });
-  await channel.bindQueue(config.queue, config.exchange, 'ticket.escalado');
-  await channel.bindQueue(config.queue, config.exchange, 'ticket.cerrado');
+  channel = await connection.createConfirmChannel();
+  await assertTopology(channel, { exchange: config.exchange, queue: config.queue });
   channel.prefetch(5);
   await channel.consume(config.queue, consumeMessage, { noAck: false });
   ready = true;
@@ -167,6 +232,7 @@ metricsServer.listen(config.metricsPort, () => {
 
 async function shutdown(signal) {
   logger.info({ signal }, 'Apagado ordenado del worker');
+  stopping = true;
   ready = false;
   await channel?.close().catch(() => {});
   await connection?.close().catch(() => {});

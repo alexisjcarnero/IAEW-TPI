@@ -11,6 +11,7 @@ RUN npx prisma generate
 
 COPY worker/index.js ./index.js
 COPY shared/webhookSignature.js ./webhookSignature.js
+COPY shared/rabbitTopology.js ./rabbitTopology.js
 
 EXPOSE 9100
 CMD ["node", "index.js"]

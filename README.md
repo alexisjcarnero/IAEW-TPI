@@ -189,8 +189,9 @@ El comportamiento, ejemplos y errores `application/problem+json` están en el [O
 3. La respuesta HTTP no depende de que RabbitMQ esté disponible: si el broker falla, el evento permanece en outbox.
 4. El publicador usa un confirm channel y marca `publicadoEn` solo después del ACK del broker.
 5. El worker consume `ticket.escalado`, persiste una `Notificacion` idempotente por `eventoId` y envía el webhook.
-6. Tras tres fallos, RabbitMQ mueve el mensaje a `mesa-ayuda.notificaciones.dead`.
-7. El resultado se observa en `GET /tickets/{id}/notificaciones`, los logs del worker, RabbitMQ y el receptor.
+6. Ante timeout, error de red, fallo de DB, HTTP `408`, `429` o `5xx`, el worker programa hasta tres reintentos con backoff exponencial (2, 4 y 8 s) en colas TTL durables. Confirma la nueva publicación antes de hacer ACK del original; `x-retry-count` limita el total.
+7. Un evento inválido o respuesta HTTP permanente va directamente a la DLQ. Un fallo transitorio que persiste después del cuarto intento también termina en `mesa-ayuda.notificaciones.dead`.
+8. El resultado se observa en `GET /tickets/{id}/notificaciones`, los logs del worker, las colas `mesa-ayuda.notificaciones.retry.*` de RabbitMQ y el receptor.
 
 ## Webhook firmado
 
@@ -257,7 +258,7 @@ Las decisiones están registradas en [`docs/adr/`](docs/adr/). Las limitaciones 
 - Auth0 es una dependencia externa: el primer JWT puede requerir acceso a OIDC/JWKS; luego la verificación de cada token es local y cacheada por la biblioteca.
 - La API local expone `/metrics` y el receptor expone el historial de demo sin autenticación. En producción deben quedar en una red interna.
 - El webhook receiver conserva solo las últimas 100 recepciones en memoria; la evidencia durable es `notificaciones` en PostgreSQL.
-- El worker reintenta hasta tres veces y luego usa DLQ, pero no hay una interfaz automática de replay.
+- El worker realiza hasta tres reintentos diferidos y luego usa DLQ, pero no hay una interfaz automática de replay.
 - El borrado de entidades con historial se rechaza para conservar auditoría; en agentes se recomienda desactivar con `PATCH`.
 - El despliegue cloud y las trazas distribuidas son optativos y no están incluidos.
 

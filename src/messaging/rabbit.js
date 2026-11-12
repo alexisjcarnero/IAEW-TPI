@@ -1,5 +1,6 @@
 const amqplib = require('amqplib');
 const config = require('../config');
+const { assertTopology } = require('../../shared/rabbitTopology');
 
 let channel = null;
 let connection = null;
@@ -22,18 +23,7 @@ async function connect(appLogger) {
   try {
     connection = await amqplib.connect(config.rabbit.url);
     const candidateChannel = await connection.createConfirmChannel();
-    const deadExchange = `${config.rabbit.exchange}.dlx`;
-    const deadQueue = `${config.rabbit.queue}.dead`;
-    await candidateChannel.assertExchange(config.rabbit.exchange, 'topic', { durable: true });
-    await candidateChannel.assertExchange(deadExchange, 'topic', { durable: true });
-    await candidateChannel.assertQueue(deadQueue, { durable: true });
-    await candidateChannel.bindQueue(deadQueue, deadExchange, '#');
-    await candidateChannel.assertQueue(config.rabbit.queue, {
-      durable: true,
-      arguments: { 'x-dead-letter-exchange': deadExchange },
-    });
-    await candidateChannel.bindQueue(config.rabbit.queue, config.rabbit.exchange, 'ticket.escalado');
-    await candidateChannel.bindQueue(config.rabbit.queue, config.rabbit.exchange, 'ticket.cerrado');
+    await assertTopology(candidateChannel, { exchange: config.rabbit.exchange, queue: config.rabbit.queue });
     channel = candidateChannel;
     logger?.info({ exchange: config.rabbit.exchange }, 'Conexion a RabbitMQ establecida');
 

@@ -11,6 +11,7 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY src ./src
+COPY shared/rabbitTopology.js ./shared/rabbitTopology.js
 
 EXPOSE 3000
 
