@@ -6,8 +6,7 @@ API REST y flujo de integración para recibir, asignar, escalar y cerrar tickets
 - **Dominio:** 4 — Mesa de ayuda.
 - **Repositorio:** <https://github.com/alexisjcarnero/IAEW-TPI>
 - **Enunciado oficial:** <https://utn-frc-iaew.github.io/iaew-2026-ecommerce-api/tpi/>
-- **Guía para estudiar y defender:** [`docs/GUIA-DEFENSA-TECNICA.md`](docs/GUIA-DEFENSA-TECNICA.md).
-- **Estado requisito por requisito:** [`docs/CHECKLIST-ENTREGA-FINAL.md`](docs/CHECKLIST-ENTREGA-FINAL.md).
+- **Evidencias de la entrega:** [`docs/evidencias/`](docs/evidencias/).
 
 ## Integrantes
 
@@ -274,6 +273,8 @@ Prueba funcional completa:
 4. Ejecutar la colección en orden. Crea datos únicos, obtiene el JWT y comprueba el efecto asíncrono.
 
 La carga JMeter se explica en [`docs/PRUEBAS.md`](docs/PRUEBAS.md). El [`reporte real`](docs/evidencias/reporte-carga.md) registra 600 requests autenticados, 0 errores y p95 de 20 ms en la máquina de prueba. Su JTL y HTML están adjuntos; repetir la prueba en otra máquina puede dar resultados diferentes.
+
+Las capturas reales de [Auth0](docs/evidencias/capturas/auth0-api-scopes.png), [RabbitMQ](docs/evidencias/capturas/rabbitmq-flujo.png) y [Grafana](docs/evidencias/capturas/grafana-carga.png) acompañan el reporte. No muestran tokens ni credenciales.
 
 ## Decisiones y limitaciones conocidas
 

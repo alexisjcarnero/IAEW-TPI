@@ -44,5 +44,5 @@ La API emitió logs JSON de solicitudes de carga con `correlationId` como `jmete
 ## Archivos de evidencia
 
 - [`carga/jmeter-carga-2026-11-16-final.zip`](carga/jmeter-carga-2026-11-16-final.zip): JTL de 600 muestras y reporte HTML completo de JMeter.
-- [`verificacion-2026-11-15.md`](verificacion-2026-11-15.md): demás pruebas y comprobaciones locales.
-- Capturas de Grafana y del reporte JMeter: ver el [índice de evidencias](README.md).
+- [Captura real del dashboard Grafana](capturas/grafana-carga.png), con los paneles de throughput, p95 y tasa de errores `5xx`.
+- [Índice de evidencias](README.md) para los demás artefactos solicitados.
