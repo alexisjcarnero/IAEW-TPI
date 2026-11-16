@@ -1,4 +1,5 @@
 node_modules/
+.npm-cache/
 .env
 *.log
 npm-debug.log*
@@ -8,3 +9,5 @@ dist/
 coverage/
 docs/evidencias/carga/results.jtl
 docs/evidencias/carga/html/
+docs/evidencias/carga/run-*/
+IAEW-TPI-v1.1.0.zip

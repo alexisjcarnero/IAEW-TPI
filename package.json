@@ -1,6 +1,6 @@
 {
   "name": "iaew-2026-mesa-ayuda",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Sistema de Mesa de ayuda para el TPI de IAEW 2026: API REST, RabbitMQ, worker, webhook y observabilidad.",
   "main": "src/server.js",
   "engines": {

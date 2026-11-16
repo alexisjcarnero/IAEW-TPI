@@ -3,8 +3,9 @@ const http = require('http');
 const pino = require('pino');
 const client = require('prom-client');
 const { PrismaClient } = require('@prisma/client');
-const { signBody } = require('./webhookSignature');
-const { RETRY_DELAYS_MS, retryQueueName, assertTopology } = require('./rabbitTopology');
+const { signBody } = require('../shared/webhookSignature');
+const { RETRY_DELAYS_MS, assertTopology } = require('../shared/rabbitTopology');
+const { retryCountOf, retryableHttpStatus, scheduleRetry } = require('./retry');
 
 const config = {
   rabbitUrl: process.env.RABBIT_URL || 'amqp://iaew:iaew-local@rabbitmq:5672',
@@ -48,11 +49,6 @@ function failure(message, retryable) {
   return error;
 }
 
-function retryCountOf(message) {
-  const count = Number(message.properties.headers?.['x-retry-count'] ?? 0);
-  return Number.isSafeInteger(count) && count >= 0 ? count : RETRY_DELAYS_MS.length;
-}
-
 function acknowledgeOrExit(message, eventId) {
   try {
     channel.ack(message);
@@ -61,23 +57,6 @@ function acknowledgeOrExit(message, eventId) {
     logger.fatal({ err: error, eventId }, 'No se pudo confirmar el consumo');
     process.exit(1);
   }
-}
-
-async function scheduleRetry(message, event, retryCount) {
-  const retryQueue = retryQueueName(config.queue, retryCount);
-  await new Promise((resolve, reject) => {
-    channel.sendToQueue(retryQueue, message.content, {
-      persistent: true,
-      contentType: message.properties.contentType || 'application/json',
-      messageId: message.properties.messageId || event.id,
-      correlationId: message.properties.correlationId || event.correlationId,
-      type: message.properties.type || event.type,
-      headers: { 'x-retry-count': retryCount + 1 },
-    }, (error) => (error ? reject(error) : resolve()));
-  });
-  // Un ACK perdido puede duplicar la entrega, pero nunca se confirma antes de publicar.
-  acknowledgeOrExit(message, event.id);
-  return RETRY_DELAYS_MS[retryCount];
 }
 
 async function sendWebhook(event) {
@@ -151,7 +130,7 @@ async function consumeMessage(message) {
     });
 
     if (!succeeded) {
-      throw failure(`Webhook respondio ${status}`, status === 408 || status === 429 || status >= 500);
+      throw failure(`Webhook respondio ${status}`, retryableHttpStatus(status));
     }
     processed.inc({ type: event.type, result: 'success' });
     logger.info(
@@ -171,7 +150,7 @@ async function consumeMessage(message) {
     const retry = error.retryable !== false && retryCount < RETRY_DELAYS_MS.length;
     if (retry) {
       try {
-        const delayMs = await scheduleRetry(message, event, retryCount);
+        const delayMs = await scheduleRetry(channel, config.queue, message, event, retryCount);
         processed.inc({ type: event.type, result: 'retry' });
         logger.warn(
           { err: error, eventId: event.id, correlationId: event.correlationId, retryNumber: retryCount + 1, delayMs },

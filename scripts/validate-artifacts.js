@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const YAML = require('yaml');
 
 const root = path.resolve(__dirname, '..');
@@ -29,6 +30,19 @@ for (const file of [
 ]) {
   JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
 }
+
+const postman = JSON.parse(
+  fs.readFileSync(path.join(root, 'tests/postman/Mesa-de-ayuda.postman_collection.json'), 'utf8')
+);
+function validatePostmanScripts(node, label) {
+  for (const event of node.event || []) {
+    if (event.script?.exec) {
+      new vm.Script(event.script.exec.join('\n'), { filename: `${label}:${event.listen}` });
+    }
+  }
+  for (const item of node.item || []) validatePostmanScripts(item, item.name);
+}
+validatePostmanScripts(postman, postman.info.name);
 
 const jmx = fs.readFileSync(path.join(root, 'tests/load/mesa-ayuda.jmx'), 'utf8');
 if (!jmx.includes('<jmeterTestPlan') || !jmx.includes('</jmeterTestPlan>')) {

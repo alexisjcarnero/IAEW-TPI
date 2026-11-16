@@ -1,4 +1,4 @@
-# Mesa de ayuda — TPI IAEW 2026 — Avance hacia la entrega final
+# Mesa de ayuda — TPI IAEW 2026 — Entrega final
 
 API REST y flujo de integración para recibir, asignar, escalar y cerrar tickets de soporte con SLA. La solución incorpora PostgreSQL, OAuth 2.0/JWT con scopes, RabbitMQ, un consumidor idempotente, webhook HMAC, logs JSON, métricas Prometheus y dashboard Grafana.
 
@@ -11,9 +11,8 @@ API REST y flujo de integración para recibir, asignar, escalar y cerrar tickets
 
 ## Integrantes
 
-- Alexis Carnero — alexisjcarnero@gmail.com
-- Esmeralda Marín — esmemarinm03@gmail.com
-- María Florencia Cornier Scocco — florcornier@gmail.com
+- Esmeralda Marín — legajo 94827.
+- María Florencia Cornier Scocco — legajo 71634.
 
 ## Alcance implementado
 
@@ -26,8 +25,8 @@ API REST y flujo de integración para recibir, asignar, escalar y cerrar tickets
 - Webhook HMAC-SHA256 verificado con comparación de tiempo constante.
 - Dockerfile por proceso propio y Docker Compose para API, worker, webhook receiver, PostgreSQL, RabbitMQ, Prometheus y Grafana.
 - Migraciones y seed idempotente.
-- OpenAPI 3.1, colección Postman, tests unitarios y plan JMeter.
-- Logs JSON correlacionables y dashboard con p95, throughput, tasa de errores y métricas de negocio.
+- OpenAPI 3.1, colección Postman, tests automatizados y plan/reporte JMeter reproducible.
+- Logs JSON correlacionables y dashboard con p95, throughput, tasa de errores, tickets activos/vencidos, escalaciones y tiempo medio hasta cierre.
 
 ## Arquitectura en un vistazo
 
@@ -79,6 +78,7 @@ Variables principales:
 | `POSTGRES_*`, `DATABASE_URL` | Base y conexión Prisma. La contraseña debe coincidir en ambos lugares. |
 | `AUTH0_DOMAIN` | Tenant sin protocolo, por ejemplo `equipo.us.auth0.com`. |
 | `AUTH0_AUDIENCE` | Identifier exacto de la API de Auth0. |
+| `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | Credenciales M2M para las pruebas locales automatizadas; no se envían a los contenedores ni se versionan. |
 | `INTERNAL_API_KEY` | Secreto del ejemplo `x-api-key`; no reemplaza OAuth. |
 | `RABBIT_*`, `RABBIT_URL`, `RABBIT_EXCHANGE` | Broker, credenciales y exchange topic. |
 | `WEBHOOK_URL`, `WEBHOOK_SECRET` | Receptor y secreto compartido para HMAC-SHA256. |
@@ -98,9 +98,11 @@ No se versionan `.env`, tokens, secretos de cliente ni credenciales reales. Los 
    - `assign:tickets`: administrar agentes, asignar y escalar.
    - `close:tickets`: cerrar tickets resueltos.
 
+   Auth0 exige una descripción al agregar cada permiso; el texto gris de ejemplo no cuenta como valor ingresado.
+
 5. En **Applications → Create Application**, crear una aplicación **Machine to Machine**.
-6. Autorizarla para la API anterior y otorgarle los cuatro permisos para ejecutar la colección completa.
-7. Copiar el Domain y audience al `.env`. El `client_id` y `client_secret` se cargan solamente en el ambiente local de Postman; no van al repositorio.
+6. Autorizarla para la API anterior y otorgarle los cuatro permisos para ejecutar la colección completa. En la interfaz actual, esta autorización también puede aparecer en la pestaña **Application Access** de la API.
+7. Copiar Domain y audience al `.env`. Para pruebas automatizadas, cargar `AUTH0_CLIENT_ID` y `AUTH0_CLIENT_SECRET` en ese mismo archivo **local ignorado por Git**; para Postman interactivo, usar un ambiente privado. Nunca copiarlos al ambiente versionado ni al repositorio.
 
 Obtener un token:
 
@@ -111,6 +113,27 @@ curl --request POST "https://$AUTH0_DOMAIN/oauth/token" \
 ```
 
 La API usa `express-oauth2-jwt-bearer`: obtiene la clave pública desde el JWKS del issuer y valida criptográficamente firma RS256, issuer, audience y `exp`; luego exige todos los scopes declarados en cada operación. Sin token responde `401`; con JWT válido pero scope insuficiente, `403`.
+
+### Ejemplos de acceso con JWT y API key
+
+Los siguientes comandos suponen que `ACCESS_TOKEN` contiene un JWT emitido para `AUTH0_AUDIENCE` con `read:tickets`, y que `INTERNAL_API_KEY` coincide con el valor de `.env`. Se cargan **solo en la terminal local**, nunca en el README ni en Git.
+
+```bash
+curl -i "http://localhost:3000/api/v1/tickets?limit=5" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+curl -i "http://localhost:3000/internal/sla-policies" \
+  -H "x-api-key: $INTERNAL_API_KEY"
+```
+
+En PowerShell de Windows se usa `curl.exe` y el prefijo `$env:`:
+
+```powershell
+curl.exe -i "http://localhost:3000/api/v1/tickets?limit=5" -H "Authorization: Bearer $env:ACCESS_TOKEN"
+curl.exe -i "http://localhost:3000/internal/sla-policies" -H "x-api-key: $env:INTERNAL_API_KEY"
+```
+
+El JWT es el mecanismo principal para la API pública; `x-api-key` muestra el caso comparativo de una ruta interna. No se deben poner estos valores reales en capturas, ejemplos versionados ni historial de comandos compartido.
 
 ## Arranque reproducible
 
@@ -219,7 +242,8 @@ curl http://localhost:4000/webhooks/mesa-ayuda/recepciones
   - latencia p95 calculada desde el histograma;
   - tasa de respuestas `5xx`;
   - requests por código;
-  - tickets creados/escalados y eventos consumidos.
+  - tickets creados/escalados y eventos consumidos;
+  - tickets activos, tickets vencidos por SLA y tiempo medio hasta cierre.
 
 Consultas principales:
 
@@ -240,7 +264,7 @@ npm run validate:artifacts
 npx prisma validate
 ```
 
-La suite actual cubre reglas de escalamiento, riesgo SLA, niveles, validación de entradas, exigencia conjunta de scopes, comparación segura de API keys y firma/verificación HMAC. El resultado verificado en este árbol es **15/15 tests aprobados** y `npm audit` sin vulnerabilidades conocidas.
+La suite actual cubre reglas de escalamiento, transacciones con outbox y control de concurrencia, topología de RabbitMQ y reintentos, validación de entradas, scopes, comparación segura de API keys, firma/verificación HMAC, métricas de dominio y pruebas HTTP locales de API/receptor. El resultado verificado es **26/26 tests aprobados** y `npm audit` sin vulnerabilidades conocidas. Además se ejecutaron Docker, Auth0, Newman y JMeter reales; ver [`docs/evidencias/`](docs/evidencias/).
 
 Prueba funcional completa:
 
@@ -249,7 +273,7 @@ Prueba funcional completa:
 3. Completar `auth0Domain`, `audience`, `clientId`, `clientSecret` e `internalApiKey` solo localmente.
 4. Ejecutar la colección en orden. Crea datos únicos, obtiene el JWT y comprueba el efecto asíncrono.
 
-La carga JMeter y el reporte se explican en [`docs/PRUEBAS.md`](docs/PRUEBAS.md). El reporte real debe regenerarse con el tenant del equipo; no se incluyen métricas inventadas.
+La carga JMeter se explica en [`docs/PRUEBAS.md`](docs/PRUEBAS.md). El [`reporte real`](docs/evidencias/reporte-carga.md) registra 600 requests autenticados, 0 errores y p95 de 20 ms en la máquina de prueba. Su JTL y HTML están adjuntos; repetir la prueba en otra máquina puede dar resultados diferentes.
 
 ## Decisiones y limitaciones conocidas
 
@@ -260,10 +284,11 @@ Las decisiones están registradas en [`docs/adr/`](docs/adr/). Las limitaciones 
 - El webhook receiver conserva solo las últimas 100 recepciones en memoria; la evidencia durable es `notificaciones` en PostgreSQL.
 - El worker realiza hasta tres reintentos diferidos y luego usa DLQ, pero no hay una interfaz automática de replay.
 - El borrado de entidades con historial se rechaza para conservar auditoría; en agentes se recomienda desactivar con `PATCH`.
+- El tiempo medio hasta cierre se usa como aproximación del tiempo de resolución: la versión actual no guarda la marca temporal exacta de transición a `RESUELTO`.
 - El despliegue cloud y las trazas distribuidas son optativos y no están incluidos.
 
-## Estado de publicación
+## Versión y entrega
 
-Este es un **avance de trabajo** en `main`, no la versión final ni una release. Los manifiestos y el contrato API indican `1.0.2` para identificar este estado; todavía no se crea un tag nuevo. Los tags `v1.0.0` y `v1.0.1` permanecen asociados a la primera entrega y no se modifican.
+La versión final del sistema es **1.1.0**. El tag `v1.0.0` (commit `d6e3fd86bc0c42a95d855e7742e78d4edf39e316`) y `v1.0.1` corresponden a la primera entrega y se preservan para no cambiar referencias ya publicadas. Por decisión del equipo, la entrega final se identifica con el nuevo tag/release **`v1.1.0`**. Esto difiere del tag literal `v1.0.0` pedido en el enunciado; se explica aquí para evitar presentar como final el ZIP antiguo.
 
-Para identificar el commit exacto de este avance, ejecutar `git rev-parse HEAD`. Antes de entregar el ZIP final, el equipo deberá completar las evidencias pendientes, fijar la versión/tag definitivo de acuerdo con la consigna y registrar el hash del commit de esa release en este README. No se debe presentar este avance como la entrega final.
+El hash del último commit de contenido de esta entrega se registrará aquí al crear la release. Igual que en la primera entrega, el commit inmediatamente posterior solo añade ese hash al README y recibe el tag final: un archivo no puede contener el hash de su propio commit sin modificarlo. Para verificar el commit exacto del ZIP descargado del tag, ejecutar `git rev-list -n 1 v1.1.0`.

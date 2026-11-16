@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "e1346933-896e-4f12-9c70-iaew2026tpi",
+    "_postman_id": "e1346933-896e-4f12-9c70-1ae02026abcd",
     "name": "IAEW 2026 - Mesa de ayuda - E2E",
     "description": "Recorrido reproducible: OAuth, CRUD, asignacion, escalamiento, efecto asincronico, cierre y API key.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -12,7 +12,8 @@
         "exec": [
           "if (pm.info.requestName === '01 - Health publico' || !pm.collectionVariables.get('runId')) {",
           "  pm.collectionVariables.set('runId', Date.now().toString());",
-          "}"
+          "}",
+          "if (pm.info.requestName === '01 - Health publico') pm.collectionVariables.unset('notificationPolls');"
         ],
         "type": "text/javascript"
       }
@@ -115,8 +116,21 @@
     {
       "name": "09 - Ver efecto del consumidor",
       "event": [
-        { "listen": "prerequest", "script": { "exec": ["setTimeout(() => {}, 2500);"] } },
-        { "listen": "test", "script": { "exec": ["pm.test('Worker persistio la notificacion', () => { pm.response.to.have.status(200); const data = pm.response.json().data; pm.expect(data.some(n => n.eventoId === pm.collectionVariables.get('eventId') && n.estado === 'ENVIADA')).to.be.true; });"] } }
+        { "listen": "prerequest", "script": { "exec": ["setTimeout(() => {}, 1000);"] } },
+        { "listen": "test", "script": { "exec": [
+          "{",
+          "const data = pm.response.code === 200 ? pm.response.json().data : [];",
+          "const delivered = data.some(n => n.eventoId === pm.collectionVariables.get('eventId') && n.estado === 'ENVIADA');",
+          "const polls = Number(pm.collectionVariables.get('notificationPolls') || 0);",
+          "if (!delivered && polls < 10) {",
+          "  pm.collectionVariables.set('notificationPolls', polls + 1);",
+          "  pm.execution.setNextRequest('09 - Ver efecto del consumidor');",
+          "} else {",
+          "  pm.collectionVariables.unset('notificationPolls');",
+          "  pm.test('Worker persistio la notificacion', () => { pm.response.to.have.status(200); pm.expect(delivered).to.be.true; });",
+          "}",
+          "}"
+        ] } }
       ],
       "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/tickets/{{ticketId}}/notificaciones" }
     },

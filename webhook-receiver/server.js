@@ -1,6 +1,6 @@
 const express = require('express');
 const client = require('prom-client');
-const { verifyBodySignature } = require('./webhookSignature');
+const { verifyBodySignature } = require('../shared/webhookSignature');
 
 const PORT = Number(process.env.PORT || 4000);
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';

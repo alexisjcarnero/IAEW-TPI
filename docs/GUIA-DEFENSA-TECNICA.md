@@ -268,6 +268,8 @@ La API registra:
 - contador por método, plantilla de ruta y status;
 - histograma de duración por esas etiquetas;
 - tickets creados/escalados;
+- gauges de tickets activos y vencidos por SLA, calculados desde PostgreSQL en cada scrape;
+- tiempo medio desde creación hasta cierre de tickets cerrados (aproximación de resolución, pues no se guarda `resueltoEn`);
 - errores de negocio.
 
 Se etiqueta `/tickets/:id`, no el UUID concreto. Poner IDs produciría alta cardinalidad: una serie temporal por ticket, con memoria creciente.
@@ -289,13 +291,13 @@ Throughput es tasa de requests; error rate es proporción de `5xx`. Los `4xx` se
 
 La pirámide del proyecto tiene tres niveles:
 
-1. **Unitarios**: reglas puras, validación, scopes y HMAC; rápidos, deterministas, 15 tests.
-2. **E2E Postman**: infraestructura real, Auth0, CRUD, transacción, broker, worker, webhook y API key.
-3. **Carga JMeter**: 600 requests autenticados; mide p95, throughput y errores.
+1. **Automatizados locales**: reglas puras, transacciones simuladas, validación, scopes, HMAC, topología y reintentos RabbitMQ, métricas de dominio y pruebas HTTP de API/receptor; rápidos y deterministas, 26 tests. No equivalen a una corrida punta a punta con los servicios reales.
+2. **E2E Postman**: infraestructura real, Auth0, CRUD, transacción, broker, worker, webhook y API key. La corrida Newman terminó con 20/20 requests y aserciones sin fallos.
+3. **Carga JMeter**: 600 requests autenticados; 0 errores, throughput 61,69 req/s y p95 20 ms en la máquina local.
 
 `npm run validate:artifacts` comprueba que archivos de entrega se puedan parsear. No sustituye un linter semántico completo de OpenAPI, pero detecta roturas estructurales básicas.
 
-El reporte de carga está deliberadamente sin números hasta ejecutar con el tenant real. En una defensa es preferible decir “esta evidencia se generó así” y mostrarla, no presentar resultados fabricados.
+El [`reporte de carga`](evidencias/reporte-carga.md) y el [`ZIP JTL/HTML`](evidencias/carga/jmeter-carga-2026-11-16-final.zip) contienen los resultados reales. En la defensa conviene aclarar que son mediciones de un escenario local, no una garantía de producción.
 
 ## 9. Reproducibilidad con Docker
 
@@ -439,21 +441,22 @@ El HMAC opera sobre bytes. Parsear y volver a serializar puede producir bytes di
 - Historial del webhook receiver es en memoria; la notificación durable está en PostgreSQL.
 - `/metrics` y el historial de recepciones son públicos dentro del Compose local.
 - No hay tracing OpenTelemetry ni despliegue cloud porque son bonos optativos.
-- Falta ejecutar y adjuntar evidencia real de Postman/JMeter/Grafana con credenciales del equipo.
+- El `403` con un JWT auténtico de scope insuficiente requiere un cliente M2M separado de solo lectura; el cliente principal posee los cuatro scopes. Es una prueba negativa adicional, no una obligación literal del enunciado.
+- Faltan capturas visuales de Grafana/Auth0/RabbitMQ para reforzar la demo, aunque las consultas, logs y reportes reales ya están documentados.
 
 Reconocer una limitación junto con su mitigación demuestra control técnico; ocultarla suele generar preguntas más difíciles.
 
 ## 14. Checklist del día anterior
 
-- [ ] `.env` real funciona y no está trackeado.
-- [ ] Los cuatro scopes están asignados al cliente M2M.
-- [ ] `docker compose up --build -d` arranca desde cero.
-- [ ] Health devuelve `ok`.
-- [ ] Colección Postman completa en verde.
-- [ ] Reporte JMeter real adjunto.
-- [ ] Dashboard muestra tráfico de esa prueba.
-- [ ] Se puede enseñar un correlation ID de extremo a extremo.
-- [ ] Se probó una firma inválida (`401`).
+- [x] `.env` real funciona y no está trackeado.
+- [x] Los cuatro scopes están asignados al cliente M2M.
+- [x] `docker compose up --build -d` arranca desde cero.
+- [x] Health devuelve `ok`.
+- [x] Colección Postman completa en verde.
+- [x] Reporte JMeter real adjunto.
+- [x] Dashboard/Prometheus registró tráfico, p95 y errores de esa prueba.
+- [x] Se puede enseñar un correlation ID en API y worker.
+- [x] Se probó una firma inválida (`401`).
 - [ ] Se conoce usuario/clave local de RabbitMQ y Grafana.
 - [ ] README tiene tag y SHA finales.
 - [ ] ZIP se descargó desde la release correcta y no contiene `.env`.

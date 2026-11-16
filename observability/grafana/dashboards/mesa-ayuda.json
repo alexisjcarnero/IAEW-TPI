@@ -59,6 +59,36 @@
       ],
       "title": "Flujo de negocio (ventana 5 min)",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 13 },
+      "id": 6,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "mesa_ayuda_tickets_active", "legendFormat": "activos", "refId": "A" }],
+      "title": "Tickets activos",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 13 },
+      "id": 7,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "mesa_ayuda_tickets_overdue", "legendFormat": "vencidos", "refId": "A" }],
+      "title": "Tickets vencidos (SLA)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "decimals": 1, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 13 },
+      "id": 8,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "mesa_ayuda_ticket_time_to_close_seconds_avg", "legendFormat": "segundos", "refId": "A" }],
+      "title": "Tiempo medio hasta cierre",
+      "type": "stat"
     }
   ],
   "refresh": "5s",
