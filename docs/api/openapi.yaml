@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mesa de ayuda API
-  version: 1.1.0
+  version: 1.0.0
   description: |
     API REST del TPI IAEW 2026. Gestiona tickets, usuarios y agentes, y
     ejecuta el escalamiento transaccional que genera un evento asincronico.

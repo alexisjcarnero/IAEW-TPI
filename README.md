@@ -290,6 +290,8 @@ Las decisiones están registradas en [`docs/adr/`](docs/adr/). Las limitaciones 
 
 ## Versión y entrega
 
-La versión final del sistema es **1.1.0**. El tag `v1.0.0` (commit `d6e3fd86bc0c42a95d855e7742e78d4edf39e316`) y `v1.0.1` corresponden a la primera entrega y se preservan para no cambiar referencias ya publicadas. Por decisión del equipo, la entrega final se identifica con el nuevo tag/release **`v1.1.0`**. Esto difiere del tag literal `v1.0.0` pedido en el enunciado; se explica aquí para evitar presentar como final el ZIP antiguo.
+La versión final del sistema y su tag de entrega son **`v1.0.0`**, tal como pide la consigna. El antiguo tag `v1.0.0` de la primera entrega apuntaba al commit `d6e3fd86bc0c42a95d855e7742e78d4edf39e316`; ese estado se conserva bajo `entrega-1-original`. El tag `v1.0.1` también permanece como referencia histórica. El tag `v1.1.0`, creado antes de corregir la numeración, se conserva por trazabilidad, pero **no** corresponde al ZIP que debe entregarse.
 
-El hash del último commit de contenido verificado (código, documentación, reportes y capturas) es **`f80330e24bfa50b7c81906357b2427876f354f39`**. El commit que recibe el tag `v1.1.0` solo incorpora esta referencia al README: un archivo no puede contener el hash de su propio commit sin cambiarlo. El hash exacto del commit empaquetado en el ZIP se obtiene con `git rev-list -n 1 v1.1.0`; ambos commits pertenecen a la misma entrega final.
+El hash del último commit de contenido funcional verificado (código, documentación, reportes y capturas) es **`f80330e24bfa50b7c81906357b2427876f354f39`**. Los commits posteriores solo corrigen la información de versión y entrega. El hash exacto del commit empaquetado en el ZIP se obtiene con `git rev-list -n 1 v1.0.0`; un archivo no puede contener el hash de su propio commit sin cambiarlo.
+
+Descargar el ZIP de entrega desde [el tag `v1.0.0` en GitHub](https://github.com/alexisjcarnero/IAEW-TPI/archive/refs/tags/v1.0.0.zip). Se recomienda guardarlo como `IAEW-TPI-v1.0.0.zip`; la consigna exige que provenga del repositorio, pero no establece un nombre especial para el archivo.
